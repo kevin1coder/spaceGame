@@ -71,9 +71,19 @@ const UI = {
 
   init(planet) {
     this.planet = planet;
-    document.body.addEventListener('click', e => {
+    // les actions se déclenchent dès l'appui (pointerdown) : un clic n'est plus perdu si la tuile
+    // est redessinée entre l'appui et le relâchement (ex. achat automatique en continu)
+    document.body.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
       const el = e.target.closest('[data-action]');
-      if (el) this.act(el.dataset.action, el.dataset.id, el);
+      if (!el || el.disabled) return;
+      this.act(el.dataset.action, el.dataset.id, el);
+    });
+    // clavier (Entrée / Espace) : le clic n'a pas d'appui de pointeur (detail = 0)
+    document.body.addEventListener('click', e => {
+      if (e.detail !== 0) return;
+      const el = e.target.closest('[data-action]');
+      if (el && !el.disabled) this.act(el.dataset.action, el.dataset.id, el);
     });
     G.on((msg, type) => this.toast(msg, type));
     $('#modalClose').addEventListener('click', () => $('#modal').hidden = true);
