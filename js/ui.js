@@ -6,9 +6,17 @@
 
 const $ = s => document.querySelector(s);
 
+/* Au-delà de 1 000 T : notation en puissance de 10 (« 1,23×10¹⁵ ») */
+function fmtSci(n, digits = 2) {
+  let e = Math.floor(Math.log10(Math.abs(n))), m = n / Math.pow(10, e);
+  if (Math.abs(+m.toFixed(digits)) >= 10) { e++; m /= 10; }   // 9,999 → 1×10ⁿ⁺¹
+  const sup = String(e).split('').map(c => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+c]).join('');
+  return `${m.toFixed(digits).replace(/\.?0+$/, '').replace('.', ',')}×10${sup}`;
+}
 function fmt(n) {
   if (!isFinite(n)) return '∞';
   const a = Math.abs(n);
+  if (a >= 1e15) return fmtSci(n);
   if (a < 1e6) return Math.floor(n).toLocaleString('fr-FR');
   if (a < 1e9) return (n / 1e6).toFixed(2).replace('.', ',') + ' M';
   if (a < 1e12) return (n / 1e9).toFixed(2).replace('.', ',') + ' Md';
@@ -19,6 +27,7 @@ function fmtRate(n) { return fmt(Math.round(n)); }
 /* Valeurs compactes : 3 chiffres au maximum (379 · 1,23k · 12,3k · 123k · 1,23M …) */
 function fmtCost(n) {
   if (n < 1000) return String(Math.floor(n));
+  if (n >= 999.5e12) return fmtSci(n, 2);
   const units = [['k', 1e3], ['M', 1e6], ['Md', 1e9], ['T', 1e12]];
   let i = 0;
   while (i < units.length - 1 && n / units[i][1] >= 999.5) i++;
@@ -53,9 +62,10 @@ function upBtn(action, id, label, disabledLabel) {
 }
 
 const GROUPS = [
-  { id: 'mines',      title: 'Extraction',    sub: 'Mines, commerce et accélérateur' },
+  { id: 'mines',      title: 'Extraction' },
   { id: 'click',      title: 'Technologies',  sub: 'Politique et automatisation' },
-  { id: 'buildings',  title: 'Spatial',       sub: 'Chantier spatial, terraformage, exploration' },
+  { id: 'buildings',  title: 'Espace orbital' },
+  { id: 'galaxy',     title: 'Espace galactique' },
   { id: 'log',        title: 'Journal',       sub: 'Derniers événements' },
 ];
 const MOON_GROUPS = [
@@ -100,6 +110,12 @@ const UI = {
     return this.moonRs[i];
   },
   setView(v) {
+    // onglet « Galaxie » : la carte galactique remplace la planète dans le bloc de gauche
+    S.ui.galaxy = v === 'galaxy';
+    if (S.ui.galaxy) {
+      document.querySelectorAll('.ship-float').forEach(e => e.remove());   // retire les messages (expédition, combat pirate) affichés
+      G.rev++; this.update(true); return;
+    }
     S.view = v === 'planet' ? 'planet' : +v;
     if (G.moonIdx() < 0) S.view = 'planet';
     this.body().resize();
@@ -120,13 +136,15 @@ const UI = {
         if (r.ok) this.flash = 's:' + sid;
         break;
       }
+      case 'autotrade': S.ui.autoTradeOn = !G.autoTradeOn(); G.rev++; break;
       case 'cargotoggle': { const m = G.curMoon(); m.cargoOn = !m.cargoOn; G.rev++; break; }
       case 'clickup': r = G.upgrade('c', id); if (r.ok) this.flash = 'c:' + id; break;
       case 'view': this.setView(id); return;
       case 'exped': { const [eid, f] = id.split(':'); r = G.startExped(eid, +f); G.rev++; break; }
       case 'sendexp': r = G.startExped('voyage', 1); G.rev++; break;
       case 'mapsel': S.ui.mapSel = +id; G.rev++; break;
-      case 'probe': r = G.startProbe(+id); G.rev++; break;
+      case 'mapdeploy': S.ui.mapSel = +id; r = G.mapDeploy(+id); G.rev++; break;   // clic sur une planète : +1 destroyer
+      case 'maprecall': r = G.mapRecall(+id); G.rev++; break;
       case 'auto':
         S.auto[id] = !S.auto[id];
         G.rev++;
@@ -258,9 +276,8 @@ const UI = {
       case 'mines': {
         const row = (label, list) => `<div class="tech-row"><div class="tech-row-label">${label}</div>${tiles(list)}</div>`;
         body = row('Mines', ids('mines').filter(id => !BUILDINGS[id].hidden).map(id => this.buildingTile('b', id)))
-          // l'Achat auto se place en fin de ligne
-          + row('Outils · Accélérateur', Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === 'extraction')
-            .sort((a, b) => (a === 'autoBuy') - (b === 'autoBuy')).map(id => this.techTile('c', id)))
+          + row('Outils · Automatisation', Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === 'extraction')
+            .sort((a, b) => (a === 'autoBuy') - (b === 'autoBuy')).map(id => this.techTile('c', id)))   // Achat auto à droite
           + row('Stockage', ids('storage').map(id => this.buildingTile('b', id)));
         break;
       }
@@ -271,10 +288,13 @@ const UI = {
         // toutes les technologies sur une seule ligne (dans l'ordre des types)
         body = tiles(TECH_TYPES.flatMap(t => Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === t.id)).map(id => this.techTile('c', id)));
         break;
+      // Espace galactique : la carte galactique et les destroyers
+      case 'galaxy': body = tiles([this.techTile('c', 'gate'), ...Object.keys(SHIPS).filter(id => SHIPS[id].role === 'galaxy').map(id => this.shipTile(id)),
+        ...Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === 'galaxy').map(id => this.techTile('c', id))]); break;
       case 'buildings': {
         const row = (label, list) => `<div class="tech-row"><div class="tech-row-label">${label}</div>${tiles(list)}</div>`;
-        body = row('Chantier spatial', [this.techTile('b', 'shipyard'), ...Object.keys(SHIPS).map(id => this.shipTile(id))])
-          + row('Terraformage · Exploration', ['armor', 'terraform', 'hyperspeed'].map(id => this.techTile('c', id)));
+        body = row('Chantier spatial', [this.techTile('b', 'shipyard'), ...Object.keys(SHIPS).filter(id => SHIPS[id].role !== 'galaxy').map(id => this.shipTile(id))])
+          + row('Terraformage · Exploration', ['terraform', 'hyperspeed'].map(id => this.techTile('c', id)));
         break;
       }
       case 'research': {
@@ -302,7 +322,7 @@ const UI = {
         <button class="group-head" data-action="toggle" data-id="${g.id}" aria-expanded="${!closed}">
           <span class="chev">▾</span>
           <h2>${g.title}</h2>
-          <small>${g.sub}</small>
+          ${g.sub ? `<small>${g.sub}</small>` : ''}
           ${count ? `<span class="group-count">${count}</span>` : ''}
         </button>
         <div class="group-body">${body}</div>
@@ -338,10 +358,11 @@ const UI = {
       case 'pickDeut': return `<b>+${G.deutPerClick(N)}</b> ${diff('+2')}`;
       case 'robot': return `<b>${this.fmtFreq(G.robotRate(N))}</b>`;
       case 'autoBuy': return `<b>${N}/${CLICK_TECHS.autoBuy.max}</b>`;
+      case 'autoTrade': return '<b>3:1</b>';
       case 'xferDeut': case 'xferDark': return `<b>${fmtCost(G.xferBatch(N))} u</b> ${diff(this.fmtRatio(G.xferRatio(N)))}`;
       case 'exchanger': {
         // ratio / volume échangé actuel (à droite du titre)
-        return `<b title="3 ferrite = 1 deutérium · 3 deutérium = 1 matière noire">${G.EXCHANGE_RATIO}:1 / ${fmtCost(G.xferBatch(L))}</b>`;
+        return `<b title="Unités échangées au maximum">${fmtCost(G.xferBatch(L))}</b>`;
       }
       case 'terraform': return `<b>${N}/${G.MAX_MOONS}</b> ${diff('+1 lune')}`;
       case 'gate': return '<b>Carte</b>';
@@ -350,6 +371,13 @@ const UI = {
       case 'peace': return `<b>−${Math.round((1 - G.peaceFactor(N)) * 100)} %</b>`;
     }
     return '';
+  },
+
+  /* « 3 ferrite → 1 deutérium » : ratio affiché sur le bouton d'échange */
+  swapLabel(a, b) {
+    const steps = RES_KEYS.indexOf(b) - RES_KEYS.indexOf(a), k = Math.pow(G.EXCHANGE_RATIO, Math.abs(steps));
+    const n = v => v === 1 ? '' : v;   // ratio 1 : pas de chiffre
+    return `${n(steps > 0 ? k : 1)}${resIcon(a)}<span class="arrow">→</span>${n(steps > 0 ? 1 : k)}${resIcon(b)}`;
   },
 
   fmtRatio(r) { return `${r.toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}:1`; },
@@ -422,13 +450,17 @@ const UI = {
         // quantité échangée affichée à côté du ratio (au-dessus du prix)
       }
       extra += `<div class="swap-grid">${EXCHANGE_PAIRS.map(([a, b], k) => k < L
-        ? `<button class="btn mini" data-action="swap" data-id="${a}:${b}" title="${RESOURCES[a].name} → ${RESOURCES[b].name}">${resIcon(a)}<span class="arrow">→</span>${resIcon(b)}</button>`
-        : `<button class="btn mini locked" disabled title="Débloqué au niveau ${k + 1}">🔒 ${resIcon(a)}<span class="arrow">→</span>${resIcon(b)}</button>`).join('')}</div>`;
+        ? `<button class="btn mini" data-action="swap" data-id="${a}:${b}" title="${RESOURCES[a].name} → ${RESOURCES[b].name}">${this.swapLabel(a, b)}</button>`
+        : `<button class="btn mini locked" disabled title="Débloqué au niveau ${k + 1}">🔒 ${this.swapLabel(a, b)}</button>`).join('')}</div>`;
     }
     if (id === 'autoBuy') {
       if (!maxed) extra += `<div class="tile-note">Ajoute : <b>${AUTO_UNLOCKS[L].label}</b></div>`;
       if (L > 0) extra += `<div class="tile-note">Activez <b>AUTO</b> sur les tuiles</div>`;
       if (G.autoUnlocked('lowest')) extra += `<button class="btn mini ${S.auto.lowest ? 'on' : 'off'}" data-action="auto" data-id="lowest">Mine la plus basse : ${S.auto.lowest ? 'ON' : 'OFF'}</button>`;
+    }
+    if (id === 'autoTrade') {
+      if (L > 0) extra += `<button class="btn mini ${G.autoTradeOn() ? 'on' : 'off'}" data-action="autotrade">Conversion : ${G.autoTradeOn() ? 'ON' : 'OFF'}</button>`;
+      else extra += `<div class="tile-note">Convertit les matériaux pour les améliorations</div>`;
     }
     if (id === 'armor') extra += `<div class="tile-note">Protège des vaisseaux contre la destruction</div>`;
     if (id === 'hyperspeed') extra += `<div class="tile-note">Expéditions : ${G.expedDuration('voyage', L).toFixed(1).replace('.', ',')} s</div>`;
@@ -441,7 +473,7 @@ const UI = {
     }
     return this.tile({
       kind, id, def, L,
-      art: { icon: true, html: ICONS[def.icon] },
+      art: STORE_ART[id] ? { html: STORE_ART[id] } : { icon: true, html: ICONS[def.icon] },
       title: def.short || def.name, evo: this.evo(kind, id, L), extra,
       action, label: kind === 't' ? 'Rechercher' : 'Upgrade',
       cost: G.costOf(kind, id, L + 1), locked: miss.length > 0, maxed, artInfo, costPrefix,
@@ -456,9 +488,9 @@ const UI = {
       kind: 's', id, def, L: n,
       art: { icon: true, html: ICONS[def.icon] },
       badge: `×${n}`,
-      title: def.name, evo: def.role === 'defense' ? `<b>⚔ ${def.atk}</b>` : `<b>🔭 ${def.explore}</b>`,
+      title: def.short || def.name, evo: def.role === 'defense' ? `<b>⚔ ${def.atk}</b>` : def.role === 'explore' ? `<b>🔭 ${def.explore}</b>` : '<b>🌌</b>',
       extra: (miss.length ? `<div class="tile-req">🔒 ${miss.join(' · ')}</div>` : '')
-        + `<div class="tile-note">${def.role === 'defense' ? 'Défense de la planète' : 'Expéditions'}</div>`,
+        + `<div class="tile-note">${def.role === 'defense' ? 'Défense de la planète' : def.role === 'explore' ? 'Expéditions' : 'Conquête de la galaxie'}</div>`,
       buttons: `<div class="split-btn"><div class="split-halves three">${[1, 10, 100].map(k =>
         `<button class="btn btn-ship" data-action="ship" data-id="${id}:${k}" title="Construire ${k} × ${def.name}">×${k}</button>`).join('')}</div></div>`,
       cost: G.costOf('s', id, 1), locked: miss.length > 0,
@@ -534,9 +566,19 @@ const UI = {
       if (c.timer && c.id === 'cargo' && G.curMoon().tech.cargo > 0) c.timer.textContent = G.curMoon().cargoOn ? `Prochain envoi : ${Math.ceil(G.cargoIn(G.moonIdx()))} s` : 'Envois automatiques en pause';
     }
     document.querySelectorAll('[data-fx]').forEach(el => { el.textContent = `${Math.ceil(G.fxLeft(el.dataset.fx))} s`; });
+    if (S.map && S.click.gate > 0) {
+      const left = Math.max(0, G.MAP_TICK - (S.map.t || 0));
+      document.querySelectorAll('.map-timer').forEach(e => { e.textContent = `${Math.ceil(left)} s`; });
+      const mb = document.querySelector('.map-bar'); if (mb) mb.style.width = `${(1 - left / G.MAP_TICK) * 100}%`;
+    }
+    const cc = document.getElementById('clickCount');
+    if (cc) cc.textContent = `⛏ ${fmt(S.stats.clicks || 0)}`;   // clics de minage
+    const clk = document.getElementById('gameClock');
+    if (clk) { const T = Math.floor(S.stats.playTime || 0), h = Math.floor(T / 3600), m = Math.floor(T / 60) % 60, s = T % 60;
+      clk.textContent = `⏱ ${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(s).padStart(2, '0')}`; }
     const rt2 = document.querySelector('.raid-timer');
     if (rt2) rt2.textContent = `${Math.ceil(G.raidIn())} s`;
-    const bar = document.querySelector('.th-bar i');
+    const bar = document.querySelector('.th-bar i:not(.map-bar)');
     if (bar) bar.style.width = `${(1 - G.raidIn() / G.RAID_PERIOD) * 100}%`;
     this.updateTimers();
     const jp = document.querySelector('.jp-timer');
@@ -551,12 +593,21 @@ const UI = {
     $('#planetSub').textContent = moon
       ? `Lune ${tr.type.toLowerCase()} de ${S.planet.name} · ${fmt(tr.diameter)} km · ${tr.tmin} °C à ${tr.tmax} °C`
       : `${tr.type} · ${fmt(tr.diameter)} km · ${tr.tmin} °C à ${tr.tmax} °C`;
-    $('#bodyTabs').innerHTML = S.moons.length ? `<button class="${moon ? '' : 'on'}" data-action="view" data-id="planet">Planète</button>` +
-      S.moons.map((m, k) => `<button class="${i === k ? 'on' : ''}" data-action="view" data-id="${k}">${esc(m.name)}</button>`).join('') : '';
+    const gate = S.click.gate > 0;
+    // à l'ouverture de la carte galactique, elle s'affiche d'office à la place de la planète
+    if (gate && !S.ui.galaxySeen) { S.ui.galaxySeen = true; S.ui.galaxy = true; }
+    const gal = gate && !!S.ui.galaxy;
+    $('#bodyTabs').innerHTML = S.moons.length || gate ? `<button class="${moon || gal ? '' : 'on'}" data-action="view" data-id="planet">Planète</button>` +
+      S.moons.map((m, k) => `<button class="${i === k && !gal ? 'on' : ''}" data-action="view" data-id="${k}">${esc(m.name)}</button>`).join('')
+      + (gate ? `<button class="${gal ? 'on' : ''}" data-action="view" data-id="galaxy">🌌 Galaxie</button>` : '') : '';
+    $('#planetWrap').style.display = gal ? 'none' : '';
+    // onglet Galaxie : le bloc planète (nom, description) est masqué
+    $('.planet-head').style.display = gal ? 'none' : '';
+    $('#planetSub').style.display = gal ? 'none' : '';
     $('.planet-head [data-action="rename"]').hidden = moon;
     this.renderFleet();
     this.renderThreats();
-    $('#mapPanel').innerHTML = S.click.gate > 0 ? `
+    $('#mapPanel').innerHTML = gal ? `
       <div class="fleet-head"><span>Carte galactique</span><span class="fl-total">${G.mapExploredCount()}/${MAP_SIZE} systèmes</span></div>${this.mapHTML()}` : '';
     $('#achPanel').innerHTML = `
       <div class="fleet-head"><span>Succès</span><span class="fl-total">${G.achCount()}/${G.achTotal()} paliers · +${G.achCount()} % production</span></div>${this.achHTML()}`;
@@ -568,26 +619,33 @@ const UI = {
     // la flotte affichée inclut les vaisseaux en expédition ; la mention se place sous le nom du vaisseau
     const nextReturn = Object.keys(S.exped).length ? Math.min(...Object.values(S.exped).map(e => e.end)) : 0;
     // tous les types de vaisseaux sont affichés, même à 0
-    const rows = Object.keys(SHIPS).map(id => {
+    const gal = S.ui.galaxy && S.click.gate > 0;
+    if (gal) { el.innerHTML = ''; return; }   // onglet Galaxie : ni flotte ni historique sous la carte
+    const rows = Object.keys(SHIPS).filter(id => gal ? SHIPS[id].role === 'galaxy' : true).map(id => {
       const d = SHIPS[id];
       const away = G.fleetTotal(id) - S.fleet[id];
       const badge = '';   // le retour d'expédition s'affiche en message flottant au-dessus du logo
       // les explorers partent en expédition automatiquement : nom + secondes avant leur retour
-      const name = away > 0 ? `${d.name} <span class="away-left" data-end="${nextReturn}"></span>` : d.name;
-      return `<li data-ship="${id}" class="${G.fleetTotal(id) ? '' : 'zero'}" style="--c:${d.color}" title="${d.name} · ${d.role === 'defense' ? `⚔ ${d.atk}` : `🔭 ${d.explore}`} chacun"><span class="fl-top"><span class="fl-ico">${ICONS[d.icon]}</span><span class="fl-n">×${fmtCost(G.fleetTotal(id))}</span></span><span class="fl-name">${name}</span>${badge}</li>`;
+      const name = away > 0 ? `${d.short || d.name} <span class="away-left" data-end="${nextReturn}"></span>` : (d.short || d.name);
+      return `<li data-ship="${id}" class="${G.fleetTotal(id) ? '' : 'zero'}" style="--c:${d.color}" title="${d.name}${d.role === 'defense' ? ` · ⚔ ${d.atk} chacun` : d.role === 'explore' ? ` · 🔭 ${d.explore} chacun` : ' · carte galactique'}"><span class="fl-top"><span class="fl-ico">${ICONS[d.icon]}</span><span class="fl-n">×${fmtCost(G.fleetTotal(id))}</span></span><span class="fl-name">${name}</span>${badge}</li>`;
     }).join('');
-    el.innerHTML = `<ul>${rows}</ul>`;
+    const hist = gal ? `<li class="fl-losses">${(S.stats.lossLog || []).filter(e => !/pirate/i.test(e.txt)).length
+      ? `<ol>${S.stats.lossLog.filter(e => !/pirate/i.test(e.txt)).slice(0, 3).map(e => `<li class="${e.win ? 'win' : 'lose'}"><b>−${fmtCost(e.n)}</b> ${esc(e.txt)}</li>`).join('')}</ol>`
+      : '<span class="muted">Aucune perte de destroyers</span>'}</li>` : '';
+    el.innerHTML = `<ul>${rows}${hist}</ul>`;
   },
 
   /* Vagues pirates à venir (une toutes les 30 s) et dernier combat */
   renderThreats() {
+    // onglet Galaxie : le tableau liste les planètes des clans concurrents
+    if (S.ui.galaxy && S.click.gate > 0) { $('#threats').innerHTML = ''; return; }   // onglet Galaxie : pas de tableau
     const P = G.fleetPower();
     let w = S.raid.wave;
-    const rows = [0, 1, 2, 3].map(k => {
+    const rows = this.currentEventRow() + [0, 1, 2, 3].map(k => {
       const when = `<span class="th-when">${k === 0 ? '<b class="raid-timer"></b>' : `+${k * G.RAID_PERIOD} s`}</span>`;
       const ev = G.plannedEvent(S.raid.step + k), prob = '';
       if (ev.id === 'boss') {
-        const E = G.bossPower(w), ok = P >= E && P > 0;
+        const E = ev.E != null ? ev.E : G.bossPower(w), ok = P >= E && P > 0;
         return `<li class="boss ${ok ? 'ok' : 'ko'} ${k === 0 ? 'next' : ''}" style="--c:${EVENTS.boss.color}" title="${esc(EVENTS.boss.desc)}">
           <span class="th-name">☠ Chef pirate ${prob}</span>
           <span class="th-pow">⚔ ${fmtCost(E)}</span>${when}</li>`;
@@ -595,10 +653,10 @@ const UI = {
       if (ev.id !== 'pirates') {
         const d = EVENTS[ev.id];
         return `<li class="evt ${d.kind} ${k === 0 ? 'next' : ''}" style="--c:${d.color}" title="${esc(d.desc)}">
-          <span class="th-name">${d.name} ${prob}</span>
+          <span class="th-name">${ev.via ? '📡 ' : ''}${d.name} ${prob}</span>
           <span class="th-pow">${ev.id === 'tax' && ev.rate ? `−${Math.round(ev.rate * 100)} %` : d.effect}</span>${when}</li>`;
       }
-      const t = G.waveTier(w), E = G.wavePower(w), ok = P >= E && P > 0;
+      const t = G.waveTier(w), E = ev.E != null ? ev.E : G.wavePower(w), ok = P >= E && P > 0;
       const row = `<li class="${ok ? 'ok' : 'ko'} ${k === 0 ? 'next' : ''}" style="--c:${t.color}" title="${esc(EVENTS.pirates.desc)}">
         <span class="th-name">Pirate <span class="th-wave">vague ${w}</span>${prob}</span>
         <span class="th-pow">⚔ ${fmtCost(E)}</span>${when}</li>`;
@@ -617,15 +675,64 @@ const UI = {
       last = `<div class="th-last ${L.win ? 'win' : 'lose'}"><b>${L.win ? 'Victoire' : 'Défaite'}</b> · ${L.boss ? '☠ chef pirate' : `vague ${L.w}`}${L.boss && L.win ? ' · <span class="trophy">🏆 trophée</span>' : ''}
         ${res ? ` · ${L.win ? 'butin' : 'pillé'} ${res}` : ''}${lost ? ` · <span class="th-lost">${lost}</span>` : ''}</div>`;
     }
-    const fx = [['inflation', '💸 Hyperinflation : prix ×2'], ['rush', '⛏ Ruée minière : clics ×5'], ['ice', '❄ Ère glaciaire : production 10 %']]
-      .filter(([k]) => G.fxActive(k)).map(([k, t]) => `<span class="fx-chip ${k}">${t} · <b data-fx="${k}"></b></span>`).join('');
     $('#threats').innerHTML = `
       <div class="fleet-head"><span>Événements</span><span class="fl-total">${S.raid.trophies ? `<span class="trophy" title="Trophées de chefs pirates : +3 % de toute production chacun">🏆 ${S.raid.trophies} (+${3 * S.raid.trophies} %)</span> · ` : ''}Votre flotte : ⚔ ${fmtCost(P)}</span></div>
-      ${fx ? `<div class="fx-list">${fx}</div>` : ''}
       <div class="th-bar"><i></i></div>
       <ul class="th-list">${rows}</ul>${this.artifactsHTML()}
       <div class="th-probs"><span class="th-probs-t">Probabilités</span>${(pr => Object.keys(EVENTS).filter(id => pr[id] != null).map(id => [id, pr[id]]))(G.eventProbs()).map(([id, p]) =>
         `<span class="th-pchip" style="--c:${EVENTS[id].color}" title="${esc(EVENTS[id].desc)}">${EVENTS[id].name} <b>${Math.round(p * 100)} %</b></span>`).join('')}</div>`;
+  },
+
+  /* Onglet Galaxie : attaques des clans annoncées pour le prochain tour */
+  attacksHTML() {
+    G.mapInit();
+    const M = G.map(), m = S.map, P = G.mapReserve();
+    if (!m.plan) m.plan = G.mapPlan();
+    const owner = i => m.owner[i] === 'player' ? '#4fc3ff' : CLANS[m.owner[i]].color;   // couleur du propriétaire
+    const nm = i => `<b style="color:${owner(i)}">${esc(M.nodes[i].name)}</b>`;
+    // vos assauts : destroyers postés sur des planètes ennemies
+    const mine = m.owner.map((o, i) => i).filter(i => m.owner[i] !== 'player' && G.mapDep(i) > 0).map(i => {
+      const F = G.mapDep(i), go = F > m.garrison[i], pct = Math.round(G.mapWinChance(F, m.garrison[i]) * 100);
+      return `<li class="atk yours ${go ? 'ok' : 'wait'}" style="--c:#4fc3ff" data-action="mapsel" data-id="${i}">
+        <span class="th-name"><b style="color:#4fc3ff">Vous</b> <span class="atk-arrow">→</span> ${nm(i)} <small class="rv-clan">×${fmtCost(G.mapEnemy(i))}</small></span>
+        <span class="th-pow">×${fmtCost(F)}</span>
+        <span class="th-when">${go ? `<small>${pct} %</small> <b class="map-timer"></b>` : '<small>en attente</small>'}</span></li>`;
+    }).join('');
+    const rows = mine + m.plan.filter(p => m.owner[p.from] === p.clan && m.owner[p.to] !== p.clan).map(p => {
+      const c = CLANS[p.clan], F = G.planForce(p), vsYou = m.owner[p.to] === 'player';
+      const def = G.mapDefense(p.to);
+      const res = vsYou ? (G.mapWinChance(F, def) > 0.5 ? 'ko' : 'ok') : '';   // vert si vous avez plus d'une chance sur deux de tenir
+      return `<li class="atk ${vsYou ? 'vs-you ' + res : ''}" style="--c:${c.color}" data-action="mapsel" data-id="${p.to}" title="${esc(`${c.name} : ${M.nodes[p.from].name} → ${M.nodes[p.to].name}`)}">
+        <span class="th-name">${nm(p.from)} <span class="atk-arrow">→</span> ${nm(p.to)}</span>
+        <span class="th-pow enemy-pow">×${fmtCost(F)}</span>
+        <span class="th-when"><b class="map-timer"></b></span></li>`;
+    }).join('');
+    return `<div class="fleet-head"><span>Attaques à venir</span><span class="fl-total">Réserve : ×${fmtCost(P)} destroyers</span></div>
+      <div class="th-bar"><i class="map-bar"></i></div>
+      <ul class="th-list">${rows || '<li class="muted" style="--c:#3a4a62">Aucune attaque annoncée · prochain tour dans <b class="map-timer"></b></li>'}</ul>`;
+  },
+
+  /* Ligne « en cours » : dernier événement survenu, mêmes colonnes que les suivantes */
+  currentEventRow() {
+    const L = S.raid.last;
+    if (!L) return '';
+    const FX = { hyperinflation: 'inflation', rush: 'rush', iceAge: 'ice', calm: 'forest' };
+    let name, eff, color, cls = '';
+    if (L.type === 'raid') {
+      name = L.boss ? '☠ Chef pirate' : `Pirate <span class="th-wave">vague ${L.w}</span>`;
+      eff = L.win ? 'Victoire' : 'Défaite';
+      color = L.win ? '#5fd38d' : '#ff5d5d';
+      cls = L.win ? 'ok' : 'ko';
+    } else {
+      const d = EVENTS[L.id];
+      name = `${L.via ? '📡 ' : ''}${d.name}`;
+      eff = L.id === 'tax' && L.note ? L.note.replace('taux ', '−') : d.effect;
+      color = d.color; cls = 'evt ' + d.kind;
+    }
+    const fx = L.type === 'event' && FX[L.id] && G.fxActive(FX[L.id]) ? FX[L.id] : null;
+    const when = fx ? `<b data-fx="${fx}"></b>` : 'en cours';
+    return `<li class="current ${cls}" style="--c:${color}"><span class="th-name">${name}</span>
+      <span class="th-pow">${eff}</span><span class="th-when">${when}</span></li>`;
   },
 
   /* Artefacts possédés : une rangée de pastilles (effet au survol) */
@@ -634,9 +741,9 @@ const UI = {
     const owned = Object.keys(ARTIFACTS).filter(id => G.art(id) > 0).sort((a, b) => ARTIFACTS[a].pts - ARTIFACTS[b].pts);
     const items = owned.map(id => {
       const a = ARTIFACTS[id], n = G.art(id), R = ARTIFACT_RARITY[a.rarity];
-      return `<span class="arti r-${a.rarity}" style="--c:${R.color}" title="${esc(`${a.name} (${R.name}, seuil ${a.pts} pts) — ${a.effect(n)} · ×${n}`)}">${a.icon}<b>×${n}</b></span>`;
+      return `<span class="arti r-${a.rarity}" style="--c:${R.color}" title="${esc([a.name, `Rareté : ${R.name}`, `Effet : ${a.effect(n)}`].join('\n'))}">${a.icon}<b>×${n}</b></span>`;
     }).join('');
-    return `<div class="fleet-head arti-title"><span>Artefacts</span></div><div class="arti-row">${items || '<span class="muted arti-none">Aucun : envoyez des explorers en expédition</span>'}</div>`;
+    return `<div class="fleet-head arti-title"><span>Artefacts aliens</span></div><div class="arti-row">${items || '<span class="muted arti-none">Aucun : envoyez des explorers en expédition</span>'}</div>`;
   },
 
   /* Attaque pirate : combat, pertes, pillage */
@@ -647,14 +754,12 @@ const UI = {
     if (r.win) this.planet.shield();
     else this.planet.explode(boss ? 20 : 12, 'planet');
     const lostN = Object.values(r.lost).reduce((a, b) => a + b, 0);
-    const savedN = Object.values(r.saved || {}).reduce((a, b) => a + b, 0);
     const html = `<em class="jp raidt">${via ? '📡 Signal inconnu → ' : boss ? '☠ ' : '⚠ '}${boss ? 'Chef pirate' : `Vague ${r.w}`} · ${r.win ? 'Victoire' : 'Défaite'}</em>`
       + (boss && r.win ? '<span class="trophy">🏆 Trophée : +3 % de production</span><br>' : '')
       + (r.win ? (this.gainsHTML(r.salvage) || '') : RES_KEYS.filter(k => r.stolen[k] >= 0.5).map(k => `<span style="color:#ff8a8a">−${fmtCost(r.stolen[k])}</span>`).join(' '))
-      + (lostN ? ` <span class="muted">· −${lostN} vaisseau${lostN > 1 ? 'x' : ''}</span>` : '')
-      + (savedN ? ` <span class="saved">· 🛡 ${savedN} protégé${savedN > 1 ? 's' : ''}</span>` : '');
+      + (lostN ? ` <span class="muted">· −${lostN} vaisseau${lostN > 1 ? 'x' : ''}</span>` : '');
     // résultat du combat : au-dessus du logo des destroyers
-    this.floatOverShip('destroyer', html, r.win ? 'win' : 'lose');
+    if (!(S.ui.galaxy && S.click.gate > 0)) this.floatOverShip('destroyer', html, r.win ? 'win' : 'lose');   // pas de message sur l'onglet Galaxie
     G.rev++;
     this.update(true);
   },
@@ -713,7 +818,7 @@ const UI = {
     if (c.autoBuy < 1) return "L'<b>Achat Automatique</b> améliore vos bâtiments dès que les matériaux sont disponibles.";
     if (c.jackpot < 1) return "L'<b>Accélérateur de particules</b> produit de la matière noire toutes les 10 secondes.";
     if (c.terraform < 1) return "Le <b>Terraformage</b> crée une lune que vous pourrez coloniser.";
-    if (b.shipyard < 1 && c.jackpot >= 1) return "Construisez l'<b>Usine Spatiale</b> (Spatial › Chantier spatial) pour bâtir votre flotte et repousser les pirates.";
+    if (b.shipyard < 1 && c.jackpot >= 1) return "Construisez l'<b>Usine Spatiale</b> (Espace orbital › Chantier spatial) pour bâtir votre flotte et repousser les pirates.";
     if (b.shipyard >= 1 && G.fleetPower() < G.wavePower(S.raid.wave)) return `La prochaine vague pirate (⚔ ${fmtCost(G.wavePower(S.raid.wave))}) est plus forte que votre flotte : construisez des vaisseaux.`;
     return "Continuez à cliquer et à améliorer vos mines : chaque niveau accélère votre colonie !";
   },
@@ -828,7 +933,7 @@ const UI = {
   jackpot() {
     const res = G.jackpotRoll();
     let html;
-    if (res.lost) html = '<em class="jp">Accélérateur</em><span class="muted">Collision ratée…</span>';
+    if (res.lost) html = '<span class="muted">Échec de la collision</span>';
     else {
       const { r, amount, big } = res;
       const txt = amount > 0

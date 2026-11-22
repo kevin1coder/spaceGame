@@ -20,19 +20,19 @@ function newState() {
     time: Date.now(),
     res, buildings, techs, click,
     planet: { name: planetName(), seed: (Math.random() * 2 ** 31) | 0 },
-    stats: { clicks: 0, raidsWon: 0, expeds: 0 },
+    stats: { clicks: 0, raidsWon: 0, expeds: 0, playTime: 0 },
     log: [],
     seenIntro: false,
     ui: { collapsed: {} },
     auto: {},   // bâtiments sélectionnés pour l'achat automatique (+ « lowest »)
     view: 'planet',   // corps affiché : 'planet' ou index de la lune (0, 1, 2)
     moons: [],
-    fleet: { destroyer: 0, frigate: 0 },   // vaisseaux construits (défense / exploration)
+    fleet: { destroyer: 0, frigate: 0, warship: 0 },   // vaisseaux construits (défense / exploration)
     artifacts: {},                          // artefacts trouvés en expédition (nombre d'exemplaires)
     raid: { wave: 1, step: 0, last: null, plan: {}, fx: {}, trophies: 0 },   // vagues pirates, événements, trophées
     exped: {},                                                               // expéditions en cours
     ach: {},                                                                 // succès débloqués
-    map: { seed: (Math.random() * 2 ** 31) | 0, explored: { 0: true }, probe: null },   // carte galactique
+    map: { seed: (Math.random() * 2 ** 31) | 0, explored: { 0: true }, probe: null, owner: null, garrison: null, news: [], t: 0 },   // carte galactique
   };
 }
 
@@ -187,6 +187,7 @@ const G = {
     const cost = this.shipCost(id, n);
     for (const r in cost) S.res[r] -= cost[r];
     S.fleet[id] += n;
+    if (SHIPS[id].role === 'galaxy' && this.mapGain) this.mapGain(0, n);   // nouveaux destroyers visibles sur la carte
     const d = SHIPS[id];
     this.emit(`${n} × ${d.name} ${d.fem ? 'construite' : 'construit'}${n > 1 ? 's' : ''} — flotte : ${S.fleet[id]}`, 'success', true);
     return { ok: true };
@@ -194,6 +195,8 @@ const G = {
   /* ---------- Vagues pirates ---------- */
   RAID_PERIOD: 30,
   raidT: 0,
+  /* le tout premier événement arrive 20 s après le début de la partie */
+  firstEvent() { this.raidT = S.raid.step === 0 && !S.raid.last ? this.RAID_PERIOD - 20 : 0; },
   raidIn() { return Math.max(0, this.RAID_PERIOD - this.raidT); },
   mineSum() { return Object.keys(MINES).reduce((a, id) => a + S.buildings[id], 0); },
   /* Poids des événements possibles (conditions + Paix Publique, qui ne réduit que les rébellions) */
@@ -232,14 +235,30 @@ const G = {
     for (const id of ids) { x -= p[id]; if (x <= 0) return { id, p: p[id] }; }
     return { id: ids[ids.length - 1], p: p[ids[ids.length - 1]] };
   },
+  /* tirage pour un créneau donné : pas d'ère glaciaire dans les 7 premiers événements de la partie */
+  pickFor(step, exclude) {
+    for (let k = 0; k < 50; k++) { const ev = this.pickEvent(exclude); if (!(ev.id === 'iceAge' && step < 7)) return ev; }
+    return { id: 'calm', p: 0 };
+  },
   /* L'événement d'un créneau est tiré à l'avance, pour être annoncé dans la liste */
   plannedEvent(step) {
     if (!S.raid.plan[step]) {
-      const ev = this.pickEvent();
+      const ev = this.pickFor(step);
       if (ev.id === 'tax') ev.rate = this.taxRate();   // taux connu dès l'annonce
       S.raid.plan[step] = ev;
+      this.freezePower(step);
     }
     return S.raid.plan[step];
+  },
+  /* Puissance d'une vague figée dès son annonce : elle n'évolue plus ensuite.
+     Vague supposée = vague actuelle + nombre de vagues pirates annoncées avant elle. */
+  freezePower(step) {
+    const ev = S.raid.plan[step];
+    if (!ev || (ev.id !== 'pirates' && ev.id !== 'boss') || ev.E != null) return;
+    let w = S.raid.wave;
+    for (let k = S.raid.step; k < step; k++) if (S.raid.plan[k] && S.raid.plan[k].id === 'pirates') w++;
+    ev.w = w;
+    ev.E = ev.id === 'boss' ? this.bossPower(w) : this.wavePower(w);
   },
   fxActive(name) { return (S.raid.fx[name] || 0) > Date.now(); },
   fxLeft(name) { return Math.max(0, ((S.raid.fx[name] || 0) - Date.now()) / 1000); },
@@ -247,11 +266,23 @@ const G = {
   nextEvent() {
     const step = S.raid.step, planned = this.plannedEvent(step);
     delete S.raid.plan[step];
-    let id = planned.id, via = null;
+    let id = planned.id, via = planned.via || null;
     // une condition a pu changer depuis le tirage (sauf événement « sticky » : la subvention reste due)
-    if (EVENTS[id].cond && !EVENTS[id].sticky && !EVENTS[id].cond(this)) id = this.pickEvent().id;
-    if (id === 'signal') { via = 'signal'; id = this.pickEvent('signal').id; }
+    if (EVENTS[id].cond && !EVENTS[id].sticky && !EVENTS[id].cond(this)) id = this.pickFor(step).id;
+    if (id === 'signal') { via = 'signal'; id = this.pickFor(step, 'signal').id; }
+    this.nextE = id === planned.id ? planned.E : null;   // puissance annoncée (figée)
     return { id, via, rate: id === planned.id ? planned.rate : undefined };
+  },
+  /* Signal inconnu : l'événement réel est révélé 0,5 s avant d'arriver */
+  revealSignal() {
+    const p = S.raid.plan[S.raid.step];
+    if (!p || p.id !== 'signal' || this.raidIn() > 0.5) return false;
+    const e = this.pickFor(S.raid.step, 'signal');
+    p.id = e.id; p.via = 'signal';
+    this.freezePower(S.raid.step);
+    if (e.id === 'tax') p.rate = this.taxRate();
+    this.rev++;
+    return true;
   },
   taxRate() { return (3 + Math.floor(Math.random() * 8)) / 100; },   // 3 à 10 %
   /* skipStep : le créneau a déjà été consommé (impôt appliqué en différé) */
@@ -264,15 +295,21 @@ const G = {
   },
   waveTier(w) { return WAVE_TIERS.filter(t => w >= t.from).pop(); },
   // puissance de feu des pirates : croissance polynomiale (20, 104 à la vague 10, 318 à la 20, ~1 500 à la 50)
-  wavePower(w) { return Math.round(20 + 2 * Math.pow(w - 1, 1.7)); },
+  /* Puissance d'une vague : la plus forte entre la progression de base et 50 à 100 % de votre flotte
+     (proportion fixe pour chaque vague) : les pirates suivent votre niveau, sans être imbattables. */
+  waveBase(w) { return Math.round(20 * Math.pow(1.15, w - 1) + 10 * Math.pow(w - 1, 1.5)); },
+  waveRoll(w) { const x = Math.sin(w * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); },   // [0, 1) fixe par vague
+  wavePower(w) { return Math.round(Math.max(this.waveBase(w), this.fleetPower() * (0.5 + 0.5 * this.waveRoll(w)))); },
   STEAL_MAX: 0.10,   // défaite sans aucune défense : 10 % des ressources pillées (20 % pour un chef pirate)
   /* Combat : la flotte gagne si sa puissance ≥ celle des pirates.
      Les pirates infligent des dégâts qui détruisent des vaisseaux (bouclier + coque). */
   BOSS_MULT: 5,
-  bossPower(w = S.raid.wave) { return this.wavePower(w) * this.BOSS_MULT; },
+  // chef pirate : 5 × la progression de base, ou 120 à 160 % de votre flotte
+  bossPower(w = S.raid.wave) { return Math.round(Math.max(this.waveBase(w) * this.BOSS_MULT, this.fleetPower() * (1.2 + 0.4 * this.waveRoll(w + 0.5)))); },
   /* boss : attaque du Chef pirate (puissance ×5, butin ×4 + matière noire + trophée, pillage doublé) */
   raid(boss = false) {
-    const w = S.raid.wave, E = boss ? this.bossPower(w) : this.wavePower(w), P = this.fleetPower();
+    const w = S.raid.wave, E = this.nextE != null ? this.nextE : boss ? this.bossPower(w) : this.wavePower(w), P = this.fleetPower();
+    this.nextE = null;
     const win = P > 0 && P >= E;
     const lost = {}, stolen = {}, salvage = {};
     Object.keys(SHIPS).forEach(id => lost[id] = 0);
@@ -339,7 +376,7 @@ const G = {
   clickGains(body = 'planet') {
     const m = this.rushMult(), moon = typeof body === 'number' && S.moons[body];
     const rt = this.rates(), out = {};   // sur une lune comme sur la planète : production de la planète mère
-    const heart = 1 + 0.25 * this.art('starHeart');
+    const heart = 1 + 0.01 * this.art('starHeart');
     // au moins 1 ferrite par clic (production d'une seconde de la mine de ferrite) ; jamais d'autre matériau
     for (const r of RES_KEYS) out[r] = r === 'ferrite' ? Math.max(1, rt[r]) * m * heart : 0;   // le clic ne rapporte que du ferrite
     return out;
@@ -382,7 +419,7 @@ const G = {
   /* ---------- Jackpot : un tirage toutes les 10 s ---------- */
   JACKPOT_PERIOD: 10,
   jackT: 0,
-  jackpotPeriod() { return Math.max(2, this.JACKPOT_PERIOD - this.art('hourglass')); },   // 2 s minimum   // Sablier temporel
+  jackpotPeriod() { return Math.max(2, this.JACKPOT_PERIOD - 0.2 * this.art('hourglass')); },   // 2 s minimum   // Sablier temporel
   jackpotIn() { return Math.max(0, this.jackpotPeriod() - this.jackT); },
   jackpotScale: { ferrite: 1, deuterium: 0.5, darkMatter: 2 },
   /* gain d'une opération : base fixe + (1 + 0,5 × niveau) secondes de production */
@@ -428,6 +465,31 @@ const G = {
       : Math.min(batch, Math.floor(W[from]), Math.floor((caps[to] - W[to]) / k));
     const give = steps > 0 ? n * k : n, get = steps > 0 ? n : n * k;
     return { n: Math.max(0, n), give, get };
+  },
+  /* Conversion automatique (si activée) : plan d'échanges pour couvrir un coût, ou null.
+     Ratio du Commerce (3:1 par cran), seulement dans les sens d'échange débloqués ;
+     on puise d'abord dans les matériaux les moins précieux. */
+  autoTradeOn() { return S.click.autoTrade > 0 && S.ui.autoTradeOn !== false; },
+  convertPlan(cost, W) {
+    if (!this.autoTradeOn()) return null;
+    const left = {}, plan = [];
+    for (const r of RES_KEYS) left[r] = W[r] - (cost[r] || 0);
+    for (const to of RES_KEYS) {
+      let need = -left[to];
+      if (need <= 0) continue;
+      for (const from of RES_KEYS) {
+        if (from === to || need <= 0 || left[from] <= 0 || !this.exchangeUnlocked(from, to)) continue;
+        const steps = RES_KEYS.indexOf(to) - RES_KEYS.indexOf(from), k = Math.pow(this.EXCHANGE_RATIO, Math.abs(steps));
+        let give, get;
+        if (steps > 0) { get = Math.min(Math.ceil(need), Math.floor(left[from] / k)); give = get * k; }
+        else { give = Math.min(Math.ceil(need / k), Math.floor(left[from])); get = give * k; }
+        if (give <= 0) continue;
+        left[from] -= give; left[to] += get; need -= get;
+        plan.push({ from, to, give, get });
+      }
+      if (need > 0) return null;
+    }
+    return plan.length ? plan : null;
   },
   exchange(from, to) {
     const q = this.exchangeQuote(from, to);
@@ -499,7 +561,13 @@ const G = {
     if (def.max && lvl > def.max) return { ok: false, code: 'max', label: 'Niveau max', cost };
     if (this.reqsMissing(def.req, def.reqClick).length) return { ok: false, code: 'locked', label: 'Verrouillé', cost };
     if (isB && this.usedFields() >= MAX_FIELDS) return { ok: false, code: 'fields', label: 'Planète pleine', cost, msg: 'Plus aucune case disponible.' };
-    if (!this.canAfford(cost, this.wallet(kind, id, auto))) return { ok: false, code: 'money', label: 'Ressources insuffisantes', cost, msg: 'Ressources insuffisantes.' };
+    const W = this.wallet(kind, id, auto);
+    if (!this.canAfford(cost, W)) {
+      // Conversion automatique : on complète avec les autres matériaux, au ratio du Commerce
+      const convert = W === S.res ? this.convertPlan(cost, W) : null;
+      if (!convert) return { ok: false, code: 'money', label: 'Ressources insuffisantes', cost, msg: 'Ressources insuffisantes.' };
+      return { ok: true, cost, lvl, convert };
+    }
     return { ok: true, cost, lvl };
   },
 
@@ -508,6 +576,7 @@ const G = {
     const c = this.check(kind, id, auto);
     if (!c.ok) return c;
     const wallet = this.wallet(kind, id, auto);
+    if (c.convert) for (const x of c.convert) { wallet[x.from] -= x.give; wallet[x.to] += x.get; }   // conversions automatiques
     for (const r in c.cost) wallet[r] -= c.cost[r];
     this.levels(kind)[id] = c.lvl;
     if (kind === 'c' && id === 'terraform') this.syncMoons();
@@ -606,6 +675,7 @@ const G = {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (e) { data = null; }
     S = data ? this.hydrate(data) : newState();
+    this.firstEvent();
     const now = Date.now();
     if (now - S.time > MAX_OFFLINE_MS) S.time = now - MAX_OFFLINE_MS;
     const elapsed = now - S.time;
@@ -636,6 +706,7 @@ const G = {
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
     S = newState();
     S.seenIntro = true;
+    this.firstEvent();
     this.rev++;
     this.save();
   },

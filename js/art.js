@@ -130,21 +130,124 @@ const MINE_ART = {
   </svg>`,
 };
 
+
 /* ---------- Scènes des entrepôts ---------- */
 const STORE_ART = {
   storeFerrite: `<svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-    <defs><linearGradient id="artSkySF" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#090d1a"/><stop offset="1" stop-color="#3d2416"/></linearGradient></defs>
-    <rect width="200" height="120" fill="url(#artSkySF)"/>
+    <defs>
+      <linearGradient id="sfSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a0d1c"/><stop offset=".55" stop-color="#3a1c18"/><stop offset="1" stop-color="#a8502a"/></linearGradient>
+      <radialGradient id="sfSun" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffd9a0"/><stop offset=".25" stop-color="#ff9a4a" stop-opacity=".9"/><stop offset="1" stop-color="#ff6a2a" stop-opacity="0"/></radialGradient>
+      <linearGradient id="sfSilo" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3a3f48"/><stop offset=".3" stop-color="#d6dee7"/><stop offset=".55" stop-color="#8d97a3"/><stop offset="1" stop-color="#262b33"/></linearGradient>
+      <linearGradient id="sfBand" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6b3a1a"/><stop offset=".3" stop-color="#f0b47a"/><stop offset=".55" stop-color="#c98d52"/><stop offset="1" stop-color="#4a2810"/></linearGradient>
+      <linearGradient id="sfWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6b7480"/><stop offset="1" stop-color="#2e343c"/></linearGradient>
+      <linearGradient id="sfRoof" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4a525e"/><stop offset=".4" stop-color="#9aa4b0"/><stop offset="1" stop-color="#3a414b"/></linearGradient>
+      <linearGradient id="sfOre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0b47a"/><stop offset=".5" stop-color="#b8763d"/><stop offset="1" stop-color="#5a3216"/></linearGradient>
+      <linearGradient id="sfBeam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe6b0" stop-opacity=".45"/><stop offset="1" stop-color="#ffe6b0" stop-opacity="0"/></linearGradient>
+      <linearGradient id="sfGround" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a3420"/><stop offset="1" stop-color="#24140b"/></linearGradient>
+    </defs>
+    <rect width="200" height="120" fill="url(#sfSky)"/>
     ${STARS(5)}
-    <path d="M0 80 L40 66 L80 74 L130 60 L200 72 V120 H0z" fill="#2c1a10"/>
-    <path d="M0 96 Q80 88 200 94 V120 H0z" fill="#4a2e1c"/>
-    <path d="M50 96 V64 Q100 30 150 64 V96z" fill="#5b6470" stroke="#262b33" stroke-width="1.5"/>
-    <path d="M58 96 V68 Q100 40 142 68" fill="none" stroke="#7b8794" stroke-width="1.5"/>
-    <path d="M78 96 V72 H122 V96" fill="#1d2026"/>
-    <path d="M80 78 H120 M80 84 H120 M80 90 H120" stroke="#3a3f48" stroke-width="1.5"/>
-    <rect x="94" y="54" width="12" height="5" fill="#ffd166"/>
-    <rect x="152" y="84" width="14" height="12" fill="#a8703d" stroke="#3a2410"/><rect x="166" y="88" width="12" height="8" fill="#c98d52" stroke="#3a2410"/>
-    <rect x="24" y="86" width="16" height="10" fill="#c98d52" stroke="#3a2410"/>
+    <circle cx="150" cy="70" r="40" fill="url(#sfSun)"/>
+    <circle cx="150" cy="70" r="9" fill="#ffd9a0"/>
+    <path d="M0 74 L22 60 L40 66 L66 50 L92 64 L120 56 L150 66 L176 54 L200 62 V120 H0z" fill="#3b2016"/>
+    <path d="M0 82 L30 72 L70 78 L110 70 L150 78 L200 72 V120 H0z" fill="#2a160e"/>
+    <rect x="0" y="88" width="200" height="32" fill="url(#sfGround)"/>
+    <!-- faisceaux des projecteurs -->
+    <path d="M36 36 L4 98 H52z" fill="url(#sfBeam)"/>
+    <path d="M182 40 L150 98 H196z" fill="url(#sfBeam)"/>
+    <!-- silos -->
+    <g>
+      <rect x="20" y="38" width="22" height="58" fill="url(#sfSilo)"/>
+      <rect x="20" y="58" width="22" height="9" fill="url(#sfBand)"/>
+      <ellipse cx="31" cy="38" rx="11" ry="3.4" fill="#e3e9f0"/><path d="M20 38 Q31 26 42 38" fill="url(#sfRoof)"/>
+      <rect x="44" y="48" width="18" height="48" fill="url(#sfSilo)"/>
+      <rect x="44" y="64" width="18" height="7" fill="url(#sfBand)"/>
+      <ellipse cx="53" cy="48" rx="9" ry="2.8" fill="#e3e9f0"/><path d="M44 48 Q53 38 62 48" fill="url(#sfRoof)"/>
+      <path d="M31 30 V22 M31 22 H64 L76 40" stroke="#5b6470" stroke-width="1.6" fill="none"/>
+      <rect x="34" y="34" width="4" height="3" fill="#36363e"/><circle cx="36" cy="35.5" r="1.4" fill="#ffd166"/>
+    </g>
+    <!-- entrepôt principal -->
+    <path d="M70 96 V58 L118 46 L166 58 V96z" fill="url(#sfWall)" stroke="#1d2026" stroke-width=".8"/>
+    <path d="M66 59 L118 44 L170 59 L166 62 L118 49 L70 62z" fill="url(#sfRoof)" stroke="#1d2026" stroke-width=".6"/>
+    <g stroke="#4a525e" stroke-width=".8"><path d="M82 96 V58 M94 96 V54 M142 96 V54 M154 96 V58"/></g>
+    <rect x="100" y="66" width="36" height="30" fill="#14171c" stroke="#3a3f48"/>
+    <g stroke="#2a2f37" stroke-width="1.2"><path d="M100 71 H136 M100 76 H136 M100 81 H136 M100 86 H136 M100 91 H136"/></g>
+    <rect x="100" y="88" width="36" height="8" fill="#ffb36b" opacity=".35"/>
+    <rect x="100" y="62" width="36" height="3" fill="#e8b83a"/>
+    <g fill="#ffd27a"><rect x="74" y="66" width="6" height="4"/><rect x="86" y="64" width="6" height="4"/><rect x="146" y="64" width="6" height="4" opacity=".5"/><rect x="156" y="66" width="6" height="4"/></g>
+    <text x="118" y="58" font-size="7" font-weight="700" text-anchor="middle" fill="#f0b47a" font-family="sans-serif">Fe</text>
+    <!-- convoyeur vers l'entrepôt -->
+    <path d="M40 96 L74 76" stroke="#2a2f37" stroke-width="5"/><path d="M40 96 L74 76" stroke="#6b7480" stroke-width="2"/>
+    <g fill="#d99a5a"><circle cx="48" cy="90" r="1.6"/><circle cx="56" cy="85.5" r="1.6"/><circle cx="64" cy="81" r="1.6"/></g>
+    <!-- tas de minerai -->
+    <path d="M4 100 Q18 80 34 100z" fill="url(#sfOre)"/>
+    <path d="M150 102 Q166 84 186 102z" fill="url(#sfOre)"/>
+    <path d="M170 102 Q182 90 198 102z" fill="url(#sfOre)" opacity=".85"/>
+    <g fill="#ffe0b0"><circle cx="16" cy="90" r=".8"/><circle cx="22" cy="94" r=".7"/><circle cx="164" cy="92" r=".8"/><circle cx="172" cy="96" r=".7"/><circle cx="184" cy="96" r=".7"/></g>
+    <!-- projecteurs et lingots -->
+    <path d="M36 36 V28 M182 40 V30" stroke="#5b6470" stroke-width="1.2"/>
+    <circle cx="36" cy="36" r="2.4" fill="#fff3d0"/><circle cx="182" cy="40" r="2.4" fill="#fff3d0"/>
+    <g stroke="#3a2410" stroke-width=".5"><rect x="138" y="94" width="10" height="4" fill="#c98d52"/><rect x="141" y="90" width="10" height="4" fill="#e0a56a"/><rect x="126" y="96" width="10" height="4" fill="#b8763d"/></g>
+  </svg>`,
+
+  shipyard: `<svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="syCeil" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"/><stop offset="1" stop-color="#b9c4d0"/></linearGradient>
+      <linearGradient id="syFloor" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a9b4c1"/><stop offset="1" stop-color="#e9eef4"/></linearGradient>
+      <linearGradient id="syWallL" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d7dee7"/><stop offset="1" stop-color="#9aa6b3"/></linearGradient>
+      <linearGradient id="syWallR" x1="1" y1="0" x2="0" y2="0"><stop offset="0" stop-color="#d7dee7"/><stop offset="1" stop-color="#9aa6b3"/></linearGradient>
+      <linearGradient id="syHull" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="#d7dee7"/><stop offset="1" stop-color="#8d97a3"/></linearGradient>
+      <radialGradient id="sySpark" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff6d0"/><stop offset=".35" stop-color="#ffb36b" stop-opacity=".85"/><stop offset="1" stop-color="#ff8c5a" stop-opacity="0"/></radialGradient>
+      <radialGradient id="syLamp" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+    </defs>
+    <!-- plafond, sol, murs (perspective vers le fond) -->
+    <path d="M0 0 H200 L134 42 H66z" fill="url(#syCeil)"/>
+    <path d="M0 120 H200 L134 78 H66z" fill="url(#syFloor)"/>
+    <path d="M0 0 L66 42 V78 L0 120z" fill="url(#syWallL)"/>
+    <path d="M200 0 L134 42 V78 L200 120z" fill="url(#syWallR)"/>
+    <!-- mur du fond : grande baie ouverte sur l'espace -->
+    <rect x="66" y="42" width="68" height="36" fill="#c9d3de"/>
+    <rect x="72" y="46" width="56" height="28" fill="#070b18"/>
+    ${STARS(17).replace(/cy="([\d.]+)"/g, (m, v) => `cy="${(46 + v * 0.5).toFixed(1)}"`).replace(/cx="([\d.]+)"/g, (m, v) => `cx="${(72 + v * 0.28).toFixed(1)}"`)}
+    <circle cx="116" cy="70" r="9" fill="#2f6fb0"/><path d="M107 70 a9 9 0 0 1 18 0" fill="#7fd3ff" opacity=".5"/>
+    <path d="M86 46 V74 M100 46 V74 M114 46 V74" stroke="#c9d3de" stroke-width="1.2"/>
+    <!-- nervures du hall -->
+    <g fill="none" stroke="#aab6c3" stroke-width="2.2">
+      <path d="M8 5 V115 M192 5 V115"/>
+    </g>
+    <g fill="none" stroke="#b9c4d0" stroke-width="1.6"><path d="M30 19 V101 M170 19 V101"/></g>
+    <g fill="none" stroke="#c3ccd6" stroke-width="1.1"><path d="M48 31 V89 M152 31 V89"/></g>
+    <path d="M8 5 H192 M30 19 H170 M48 31 H152" stroke="#e3e9f0" stroke-width="1.4"/>
+    <!-- bandes lumineuses au plafond -->
+    <g fill="#ffffff"><path d="M84 0 H96 L98 42 H94z" opacity=".8"/><path d="M104 0 H116 L106 42 H102z" opacity=".8"/></g>
+    <ellipse cx="100" cy="10" rx="60" ry="8" fill="url(#syLamp)" opacity=".5"/>
+    <!-- lignes lumineuses bleues le long des murs -->
+    <path d="M0 64 L66 66 M200 64 L134 66" stroke="#4fc3ff" stroke-width="1.4" opacity=".85"/>
+    <path d="M0 92 L66 72 M200 92 L134 72" stroke="#4fc3ff" stroke-width="1" opacity=".6"/>
+    <!-- marquage au sol -->
+    <path d="M100 78 V120" stroke="#ff8c5a" stroke-width="1.4" stroke-dasharray="4 4"/>
+    <path d="M74 78 L40 120 M126 78 L160 120" stroke="#e8b83a" stroke-width="1.2" opacity=".8"/>
+    <!-- berceau et vaisseau en construction (vu de face) -->
+    <rect x="70" y="92" width="60" height="5" fill="#5b6470"/><rect x="76" y="86" width="6" height="7" fill="#3a3f48"/><rect x="118" y="86" width="6" height="7" fill="#3a3f48"/>
+    <path d="M100 58 L136 82 L128 90 H72 L64 82z" fill="url(#syHull)" stroke="#6b7480" stroke-width=".8"/>
+    <path d="M100 58 L112 80 H88z" fill="#e9eef4" stroke="#aab6c3" stroke-width=".5"/>
+    <path d="M92 74 Q100 66 108 74 L106 78 H94z" fill="#4f9dff"/><path d="M95 73 Q100 69 104 72" stroke="#bfe8ff" stroke-width=".8" fill="none"/>
+    <path d="M64 82 L44 88 L46 90 L72 88z M136 82 L156 88 L154 90 L128 88z" fill="#c3ccd6" stroke="#6b7480" stroke-width=".6"/>
+    <rect x="80" y="84" width="10" height="3" fill="#ff8c5a"/><rect x="110" y="84" width="10" height="3" fill="#ff8c5a"/>
+    <!-- partie non terminée : armature -->
+    <path d="M136 82 L148 76 L156 88 M148 76 L150 88" stroke="#ff8c5a" stroke-width=".8" fill="none"/>
+    <!-- bras robotisés -->
+    <path d="M22 120 L30 96 L52 82" stroke="#e3e9f0" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M22 120 L30 96 L52 82" stroke="#8d97a3" stroke-width="1.2" fill="none"/>
+    <circle cx="30" cy="96" r="3.5" fill="#6b7480"/><path d="M52 82 L60 84" stroke="#3a3f48" stroke-width="2"/>
+    <path d="M180 120 L168 94 L150 78" stroke="#e3e9f0" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M180 120 L168 94 L150 78" stroke="#8d97a3" stroke-width="1.2" fill="none"/>
+    <circle cx="168" cy="94" r="3.5" fill="#6b7480"/>
+    <circle cx="61" cy="84" r="7" fill="url(#sySpark)"/><circle cx="149" cy="78" r="6" fill="url(#sySpark)"/>
+    <g stroke="#ffd166" stroke-width=".6"><path d="M61 84 l-4 5 M61 84 l3 6 M61 84 l-6 1 M149 78 l4 5 M149 78 l-2 6"/></g>
+    <!-- pont roulant -->
+    <rect x="40" y="24" width="120" height="4" fill="#ff8c5a"/><rect x="92" y="28" width="16" height="5" fill="#3a3f48"/>
+    <path d="M100 33 V56" stroke="#3a3f48" stroke-width=".8"/>
   </svg>`,
 
   storeDeuterium: `<svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true">

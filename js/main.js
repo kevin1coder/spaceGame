@@ -56,6 +56,9 @@
     });
     // événements : toutes les 30 secondes, un événement tiré au sort (pirates compris)
     G.raidT += dt;
+    S.stats.playTime = (S.stats.playTime || 0) + dt;   // chrono de la partie
+    G.revealSignal();
+    G.mapTick(dt);   // guerres des clans sur la carte galactique   // signal inconnu : dévoilé 0,5 s avant l'arrivée
     if (G.raidT >= G.RAID_PERIOD) {
       G.raidT = 0;
       const ev = G.nextEvent();
@@ -79,7 +82,7 @@
       forest += ((G.fxActive('forest') ? 1 : 0) - forest) * Math.min(1, dt * 0.3);
       planet.render(ts, {
         snow, forest,
-        buildings: S.buildings,   // bâtiments dessinés sur la planète
+        buildings: { ...S.buildings, jackpot: S.click.jackpot || 0 },   // bâtiments dessinés sur la planète (+ accélérateur)
         lightDensity: Math.min(1, G.usedFields() / 60),
         satellites: Math.min(6, S.buildings.shipyard),
         moons: S.moons.length,
@@ -88,6 +91,8 @@
       });
     }
     if (ts - lastUI > 120) { UI.update(); lastUI = ts; }
+    const fl = (G.mapFlights.length || G.mapHits.length) && document.querySelector('#mapPanel .map-flights');
+    if (fl) fl.innerHTML = UI.flightsSVG();   // flèches d'attaque animées (à chaque image)
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

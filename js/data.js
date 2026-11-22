@@ -80,7 +80,7 @@ const BUILDINGS = {
   },
   shipyard: {
     name: 'Usine Spatiale', short: 'Usine spat.', cat: 'shipyard', icon: 'factory', color: '#ff8c5a',
-    desc: "Construit les vaisseaux de votre flotte : le niveau 1 débloque le Destroyer (défense), le niveau 2 l'Explorer (exploration). Chaque niveau suivant réduit leur coût de 5 %.",
+    desc: "Construit les vaisseaux de votre flotte : le niveau 1 débloque le Bouclier électromagnétique (défense), le niveau 2 l'Explorer (exploration), le niveau 10 le Destroyer (carte galactique). Chaque niveau suivant réduit leur coût de 5 %.",
     cost: { ferrite: 2000, deuterium: 1000, darkMatter: 300 }, factor: 2,
   },
 };
@@ -187,6 +187,12 @@ const CLICK_TECHS = {
     desc: "Chaque niveau ajoute des bâtiments ou technologies à l'achat automatique. Activez « AUTO » sur leurs tuiles : ils seront achetés dès que les matériaux sont disponibles. Au niveau 8 : achat automatique de la mine au plus bas niveau.",
     cost: { ferrite: 250, deuterium: 100 }, factor: 2.2, max: 8,
   },
+  autoTrade: {
+    type: 'galaxy', name: 'Conversion automatique', short: 'Conversion auto', icon: 'swap', color: '#7fe0b0',
+    desc: "Une fois activée, quand un matériau manque pour une amélioration (manuelle ou automatique), les autres matériaux sont convertis automatiquement au ratio du Commerce (3:1), dans les sens d'échange débloqués.",
+    reqClick: { exchanger: 1 },
+    cost: { ferrite: 150000, deuterium: 60000, darkMatter: 10000 }, factor: 1, max: 1,
+  },
   xferDeut: {
     type: 'hidden', name: 'Transfert Deutérium', short: 'Transf. deut.', icon: 'swap', color: RESOURCES.deuterium.color,
     desc: 'Échange du ferrite contre du deutérium, dans les deux sens. Chaque niveau augmente le nombre d\'unités échangées et rapproche le ratio de 1:1.',
@@ -200,7 +206,8 @@ const CLICK_TECHS = {
     cost: { ferrite: 600, deuterium: 300 }, factor: 2.5,
   },
   armor: {
-    type: 'space', name: 'Cuirassé', short: 'Cuirassé', icon: 'shield', color: '#9fb0c8',
+    type: 'hidden', name: 'Cuirassé', short: 'Cuirassé', icon: 'shield', color: '#9fb0c8',
+    req: { buildings: { shipyard: 4 } },
     desc: "Blindage renforcé : chaque niveau protège 5 % des vaisseaux qui auraient dû être détruits lors d'une attaque pirate (jusqu'à 50 %).",
     cost: { ferrite: 30000, deuterium: 15000, darkMatter: 3000 }, factor: 2.5, max: 10,
   },
@@ -208,10 +215,12 @@ const CLICK_TECHS = {
     type: 'space', name: 'Hypervitesse', short: 'Hypervitesse', icon: 'warp', color: '#7fd3ff',
     desc: "Propulsion hyperluminique : chaque niveau réduit de 15 % la durée des expéditions des explorers.",
     cost: { darkMatter: 2000 }, factor: 2.5, max: 8,
+    req: { buildings: { shipyard: 5 } },
   },
   gate: {
-    type: 'hidden', name: 'Conquête spatiale', short: 'Conquête spatiale', icon: 'gate', color: '#4fc3ff',
-    desc: "Ouvre la carte galactique : vous pourrez y envoyer des sondes pour explorer les systèmes voisins.",
+    type: 'space', name: 'Carte galactique', short: 'Carte galactique', icon: 'gate', color: '#4fc3ff',
+    desc: "Affiche la carte de la galaxie : chaque système est habité par un clan. Envoyez vos destroyers conquérir les systèmes voisins ; le but est de posséder toute la galaxie.",
+    req: { buildings: { shipyard: 10 } },
     cost: { darkMatter: 15000 }, factor: 1, max: 1,
   },
   peace: {
@@ -239,6 +248,7 @@ const CLICK_TECHS = {
     type: 'space', name: 'Terraformage', short: 'Terraform.', icon: 'moon', color: '#cfd8e3',
     desc: 'Chaque niveau crée une nouvelle lune (3 maximum) et augmente toute la production de 5 %. Cliquez sur une lune pour la coloniser : mines et compteur de matière propres.',
     cost: { darkMatter: 10000 }, factor: 5, max: 3,
+    req: { buildings: { shipyard: 3 } },
   },
 
 };
@@ -246,18 +256,25 @@ const CLICK_TECHS = {
 /* Vaisseaux (construits à l'Usine Spatiale, coût fixe par unité) */
 const SHIPS = {
   destroyer: {
-    name: 'Destroyer', role: 'defense', icon: 'shipDestroyer', color: '#ff6b6b',
-    desc: "Vaisseau de défense : sa puissance de feu protège la planète contre les pirates. Il ne part pas en expédition.",
+    name: 'Bouclier électromagnétique', short: 'Bouclier EM', role: 'defense', icon: 'shield', color: '#4f9dff',
+    desc: "Bouclier électromagnétique : sa puissance protège la planète contre les pirates.",
     cost: { ferrite: 3000, deuterium: 1200 }, factor: 1,
     atk: 60, explore: 0,
     req: { buildings: { shipyard: 1 } },
   },
   frigate: {
-    name: 'Explorer', role: 'explore', icon: 'shipFrigate', color: '#7fd3ff',
+    name: 'Explorer', role: 'explore', icon: 'shipFrigate', color: '#ff6b6b',
     desc: "Vaisseau d'exploration : les explorers partent automatiquement en expédition (30 s) et rapportent un artefact selon leur score (explorers × aléatoire) : le meilleur artefact dont le seuil est atteint. Sans armement, il ne défend pas la planète.",
     cost: { ferrite: 4000, deuterium: 2000, darkMatter: 200 }, factor: 1,
     atk: 0, explore: 50,
     req: { buildings: { shipyard: 2 } },
+  },
+  warship: {
+    name: 'Destroyer', role: 'galaxy', icon: 'shipDestroyer', color: '#ff9f43',
+    desc: "Vaisseau de guerre de la carte galactique : cliquez sur une planète de la carte pour y envoyer un destroyer. Les combats de la carte se comptent en nombre de destroyers.",
+    cost: { ferrite: 8000, deuterium: 4000, darkMatter: 500 }, factor: 1,
+    atk: 0, explore: 0,
+    req: { buildings: { shipyard: 10 } },
   },
 };
 
@@ -286,11 +303,11 @@ const ARTIFACTS = {
   relic:    { pts: 20, name: 'Amphore stellaire',     icon: '🏺', rarity: 'common',    effect: n => `+${10 * n} % de capacité des entrepôts` },
   compass:  { pts: 35, name: 'Boussole galactique',   icon: '🧭', rarity: 'rare',      effect: n => `+${n} % de toute production` },
   voidShard:{ pts: 55, name: 'Éclat du vide',         icon: '🔮', rarity: 'rare',      effect: n => `+${5 * n} % de matière noire de l'Accélérateur` },
-  cannon:   { pts: 80, name: 'Canon précurseur',      icon: '🔱', rarity: 'rare',      effect: n => `+${5 * n} % de puissance de feu des destroyers` },
-  aegis:    { pts: 110, name: 'Égide antique',         icon: '🛡️', rarity: 'rare',      effect: n => `+${3 * n} % de vaisseaux protégés (Cuirassé)` },
+  cannon:   { pts: 80, name: 'Canon précurseur',      icon: '🔱', rarity: 'rare',      effect: n => `+${5 * n} % de puissance des boucliers électromagnétiques` },
+  aegis:    { pts: 110, name: 'Égide antique',         icon: '🛡️', rarity: 'rare',      effect: n => `+${3 * n} % de chances qu'un vaisseau détruit soit sauvé (65 % max)` },
   seal:     { pts: 150, name: 'Sceau diplomatique',    icon: '📜', rarity: 'rare',      effect: n => `−${Math.min(100, 10 * n)} % de ressources pillées par les pirates` },
-  hourglass:{ pts: 250, name: 'Sablier temporel',      icon: '⏳', rarity: 'legendary', effect: n => `Accélérateur : une collision toutes les ${Math.max(2, 10 - n)} s (2 s minimum)` },
-  starHeart:{ pts: 400, name: 'Cœur d\'étoile',        icon: '🌟', rarity: 'legendary', effect: n => `+${25 * n} % de ferrite par clic` },
+  hourglass:{ pts: 250, name: 'Sablier temporel',      icon: '⏳', rarity: 'legendary', effect: n => `Accélérateur : une collision toutes les ${String(Math.round(Math.max(2, 10 - 0.2 * n) * 10) / 10).replace('.', ',')} s (−0,2 s par sablier, 2 s minimum)` },
+  starHeart:{ pts: 400, name: 'Cœur d\'étoile',        icon: '🌟', rarity: 'legendary', effect: n => `+${n} % de ferrite par clic` },
 };
 
 /* Commerce : ordre de déblocage des sens d'échange (un par niveau) */
@@ -360,12 +377,13 @@ const EVENTS = {
     apply(G) { S.raid.fx.rush = Date.now() + G.RAID_PERIOD * 1000; return { note: 'Clics ×5 pendant 30 s' }; },
   },
   subsidy: {
-    name: 'Subvention galactique', kind: 'pos', weight: 9, sticky: true, effect: '+8 %', color: '#7fe0b0',
-    desc: '+8 % de chaque matériau (tirée uniquement tant que la somme des niveaux des mines est inférieure à 20 ; une subvention annoncée est toujours versée).',
+    name: 'Subvention galactique', kind: 'pos', weight: 9, sticky: true, effect: '+20 s prod.', color: '#7fe0b0',
+    desc: 'Verse 20 secondes de production de chaque matériau (au moins 250 ferrite). Tirée uniquement tant que la somme des niveaux des mines est inférieure à 20 ; une subvention annoncée est toujours versée.',
     cond: G => G.mineSum() < 20,
     apply(G) {
       const caps = G.rates().caps, resGain = {};
-      for (const r of RES_KEYS) { resGain[r] = Math.max(0, Math.min(S.res[r] * 0.08, caps[r] - S.res[r])); S.res[r] += resGain[r]; }
+      const rt = G.rates();
+      for (const r of RES_KEYS) { resGain[r] = Math.max(0, Math.min(Math.max(r === 'ferrite' ? 250 : 0, rt[r] * 20), caps[r] - S.res[r])); S.res[r] += resGain[r]; }
       return { resGain };
     },
   },

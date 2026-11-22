@@ -421,59 +421,114 @@ class PlanetRenderer {
       }
       ctx.restore();
     }
-    // coque (vaisseau orienté vers la gauche)
-    ctx.save();
-    ctx.translate(x, y); ctx.rotate(tilt);
-    const L = size, H = size * 0.15;   // plus long, même hauteur qu'avant
-    // aura bleue autour du vaisseau
+    // ---------- vaisseau en 3D : maillage projeté en perspective, éclairé ----------
+    // lacet (yaw) : le vaisseau pivote pendant l'approche, se présente de 3/4, puis repart
+    let yaw;
+    if (age < ARRIVE) yaw = 0.75 - 0.45 * ease(age / ARRIVE);
+    else if (age < ARRIVE + STAY) yaw = 0.3 + 0.05 * Math.sin(age * 0.0015);
+    else yaw = 0.3 - 0.9 * easeIn((age - ARRIVE - STAY) / LEAVE);
+    this.drawShip3D(ctx, x, y, size, yaw, tilt, t);
+  }
+
+  /* Maillage du vaisseau collecteur (coordonnées : x = longueur, proue vers −x ; y = haut ; z = largeur) */
+  taxShipMesh() {
+    if (this._taxMesh) return this._taxMesh;
+    const quads = [], add = (pts, col, kind) => quads.push({ pts, col, kind });
+    const box = (x0, x1, y0, y1, z0, z1, col, kind = 'hull') => {
+      const v = (x, y, z) => [x, y, z];
+      add([v(x0, y1, z0), v(x1, y1, z0), v(x1, y1, z1), v(x0, y1, z1)], col, kind);       // dessus
+      add([v(x0, y0, z1), v(x1, y0, z1), v(x1, y0, z0), v(x0, y0, z0)], col, kind);       // dessous
+      add([v(x0, y0, z0), v(x1, y0, z0), v(x1, y1, z0), v(x0, y1, z0)], col, kind);       // flanc avant (z0)
+      add([v(x1, y0, z1), v(x0, y0, z1), v(x0, y1, z1), v(x1, y1, z1)], col, kind);       // flanc arrière (z1)
+      add([v(x0, y0, z1), v(x0, y0, z0), v(x0, y1, z0), v(x0, y1, z1)], col, kind);       // proue (carrée)
+      add([v(x1, y0, z0), v(x1, y0, z1), v(x1, y1, z1), v(x1, y1, z0)], col, kind);       // poupe
+    };
+    box(-0.55, 0.5, -0.12, 0.12, -0.16, 0.16, [40, 46, 58]);            // coque principale
+    box(-0.45, 0.38, 0.12, 0.2, -0.1, 0.1, [32, 37, 48]);               // pont supérieur
+    box(-0.02, 0.24, 0.2, 0.33, -0.06, 0.06, [26, 30, 40]);             // passerelle
+    box(0.5, 0.6, -0.08, 0.08, -0.13, -0.03, [55, 62, 78], 'engine');   // réacteurs
+    box(0.5, 0.6, -0.08, 0.08, 0.03, 0.13, [55, 62, 78], 'engine');
+    box(-0.3, 0.3, -0.2, -0.12, -0.07, 0.07, [30, 34, 44]);             // quille
+    return (this._taxMesh = quads);
+  }
+
+  drawShip3D(ctx, X, Y, size, yaw, roll, t) {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), pitch = 0.32, cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const cr = Math.cos(roll), sr = Math.sin(roll), F = 3.2;          // focale (perspective douce)
+    const rot = ([x, y, z]) => {
+      let X1 = x * cy + z * sy, Z1 = -x * sy + z * cy;                // lacet (axe vertical)
+      let Y1 = y * cp - Z1 * sp; Z1 = y * sp + Z1 * cp;               // tangage (vue légèrement du dessus)
+      return [X1 * cr - Y1 * sr, X1 * sr + Y1 * cr, Z1];              // roulis
+    };
+    const proj = ([x, y, z]) => { const k = F / (F + z); return [X + x * size * k, Y - y * size * k, z]; };
+    let Lx = -0.4, Ly = 0.75, Lz = -0.55; const ln = Math.hypot(Lx, Ly, Lz); Lx /= ln; Ly /= ln; Lz /= ln;
+
+    // aura bleue
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
     const pulse = 0.85 + 0.15 * Math.sin(t * 0.004);
-    const aura = ctx.createRadialGradient(0, 0, L * 0.15, 0, 0, L * 0.85);
-    aura.addColorStop(0, `rgba(70,150,255,${0.45 * pulse})`);
-    aura.addColorStop(0.5, `rgba(40,110,255,${0.18 * pulse})`);
-    aura.addColorStop(1, 'rgba(20,60,200,0)');
-    ctx.fillStyle = aura;
-    ctx.beginPath(); ctx.ellipse(0, 0, L * 0.85, L * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+    const aura = ctx.createRadialGradient(X, Y, size * 0.1, X, Y, size * 0.85);
+    aura.addColorStop(0, `rgba(70,150,255,${0.42 * pulse})`); aura.addColorStop(0.5, `rgba(40,110,255,${0.16 * pulse})`); aura.addColorStop(1, 'rgba(20,60,200,0)');
+    ctx.fillStyle = aura; ctx.beginPath(); ctx.ellipse(X, Y, size * 0.85, size * 0.45, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    // réacteurs (à l'arrière, à droite)
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    const fl = 0.8 + 0.2 * Math.sin(t * 0.04);
-    for (const dy of [-H * 0.45, H * 0.45]) {
-      const eg = ctx.createRadialGradient(L * 0.52, dy, 0, L * 0.52, dy, H * 0.9 * fl);
-      eg.addColorStop(0, 'rgba(200,240,255,0.95)'); eg.addColorStop(0.4, 'rgba(80,180,255,0.6)'); eg.addColorStop(1, 'rgba(40,120,255,0)');
-      ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(L * 0.52, dy, H * 0.9 * fl, 0, Math.PI * 2); ctx.fill();
+
+    // faces : rotation, normale, tri du fond vers l'avant
+    const faces = [];
+    for (const q of this.taxShipMesh()) {
+      const r = q.pts.map(rot);
+      const ux = r[1][0] - r[0][0], uy = r[1][1] - r[0][1], uz = r[1][2] - r[0][2];
+      const vx = r[3][0] - r[0][0], vy = r[3][1] - r[0][1], vz = r[3][2] - r[0][2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      if (nz > 0.02) continue;                                       // face tournée vers l'arrière : invisible
+      const depth = r.reduce((a, p) => a + p[2], 0) / 4;
+      faces.push({ q, r, n: [nx, ny, nz], depth });
     }
-    ctx.restore();
-    const hull = ctx.createLinearGradient(0, -H, 0, H);
-    hull.addColorStop(0, '#3a404c'); hull.addColorStop(0.5, '#1a1e26'); hull.addColorStop(1, '#090b0f');
-    ctx.fillStyle = hull; ctx.strokeStyle = 'rgba(90,160,255,0.55)'; ctx.lineWidth = this.dpr;
-    ctx.beginPath();
-    // proue carrée (avant droit, à gauche)
-    ctx.moveTo(-L * 0.55, -H * 0.72);
-    ctx.lineTo(L * 0.25, -H * 0.85); ctx.lineTo(L * 0.5, -H * 0.6);
-    ctx.lineTo(L * 0.5, H * 0.6); ctx.lineTo(L * 0.25, H * 0.85);
-    ctx.lineTo(-L * 0.55, H * 0.72);
-    ctx.closePath(); ctx.fill(); ctx.stroke();
-    // plaque frontale
-    ctx.fillStyle = '#262b35';
-    ctx.fillRect(-L * 0.55, -H * 0.72, L * 0.025, H * 1.44);
-    // superstructure sombre
-    ctx.fillStyle = '#20252f';
-    ctx.fillRect(-L * 0.05, -H * 1.25, L * 0.28, H * 0.55);
-    // hublots bleus : trois rangées le long de la coque + passerelle
+    faces.sort((a, b) => b.depth - a.depth);
     ctx.save();
-    ctx.fillStyle = '#7fd3ff'; ctx.shadowColor = '#4fa8ff'; ctx.shadowBlur = 4 * this.dpr;
-    const rows = [[-H * 0.42, 19, -0.46], [-H * 0.06, 21, -0.48], [H * 0.3, 19, -0.46]];
-    for (const [ry, count, x0] of rows) {
-      for (let i = 0; i < count; i++) {
-        if ((i * 7 + count) % 5 === 0 && Math.sin(t * 0.002 + i) > 0.6) continue;   // quelques hublots qui s'éteignent
-        ctx.fillRect(L * x0 + i * L * 0.044, ry, L * 0.02, H * 0.12);
+    ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(0.6, this.dpr * 0.6);
+    for (const f of faces) {
+      const diff = Math.max(0, -(f.n[0] * Lx + f.n[1] * Ly + f.n[2] * Lz));
+      const k = 0.35 + 0.95 * diff;
+      const [cr0, cg0, cb0] = f.q.col;
+      const P = f.r.map(proj);
+      ctx.beginPath(); P.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath();
+      ctx.fillStyle = `rgb(${Math.min(255, cr0 * k + 8) | 0},${Math.min(255, cg0 * k + 10) | 0},${Math.min(255, cb0 * k + 16) | 0})`;
+      ctx.strokeStyle = 'rgba(110,170,255,0.45)';
+      ctx.fill(); ctx.stroke();
+      // hublots bleus sur les grands flancs de la coque, répartis sur la face (interpolation bilinéaire)
+      const isSide = Math.abs(f.n[2]) > 0.25 && Math.abs(f.n[1]) < 0.85;
+      const isHullSide = f.q.kind === 'hull' && isSide && Math.abs(f.q.pts[0][2] - f.q.pts[2][2]) < 1e-6;
+      if (isHullSide) {
+        const len = Math.abs(f.q.pts[1][0] - f.q.pts[0][0]);
+        const cols = Math.max(4, Math.round(len * 28)), rows = f.q.pts[2][1] - f.q.pts[0][1] > 0.15 ? 3 : 1;
+        const lerp = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+        ctx.save(); ctx.fillStyle = '#7fd3ff'; ctx.shadowColor = '#4fa8ff'; ctx.shadowBlur = 3 * this.dpr;
+        for (let j = 0; j < rows; j++) {
+          const v = rows === 1 ? 0.5 : 0.25 + j * 0.25;
+          for (let i = 0; i < cols; i++) {
+            if ((i * 7 + j * 3) % 6 === 0 && Math.sin(t * 0.002 + i) > 0.5) continue;
+            const u = (i + 0.5) / cols;
+            const A = lerp(lerp(P[0], P[1], u), lerp(P[3], P[2], u), v);
+            const w = Math.max(this.dpr * 0.9, size * 0.012), h = Math.max(this.dpr * 0.9, size * 0.014);
+            ctx.fillRect(A[0] - w / 2, A[1] - h / 2, w, h);
+          }
+        }
+        ctx.restore();
+      }
+      // lueur des réacteurs
+      if (f.q.kind === 'engine' && f.n[0] > 0.3) {
+        const c = P.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+        const fl = 0.8 + 0.2 * Math.sin(t * 0.04);
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(c[0], c[1], 0, c[0], c[1], size * 0.12 * fl);
+        g.addColorStop(0, 'rgba(210,245,255,0.95)'); g.addColorStop(0.45, 'rgba(80,180,255,0.6)'); g.addColorStop(1, 'rgba(40,120,255,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c[0], c[1], size * 0.12 * fl, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
       }
     }
-    for (let i = 0; i < 5; i++) ctx.fillRect(-L * 0.02 + i * L * 0.05, -H * 1.08, L * 0.022, H * 0.14);
-    ctx.restore();
     ctx.restore();
   }
+
 
   /* Rébellion : la planète s'embrase pendant `dur` ms (foyers répartis sur le disque) */
   burn(dur = 10000) {
@@ -499,137 +554,271 @@ class PlanetRenderer {
   structureSites() {
     if (this._sites && this._sites.seed === this.seed) return this._sites;
     const kinds = [
-      ['mineFerrite', 'derrick', '#d9a066'], ['mineDeuterium', 'tank', '#4fd1c5'], ['darkMatterCollector', 'dish', '#a77bff'],
-      ['storeFerrite', 'dome', '#d9a066'], ['storeDeuterium', 'dome', '#4fd1c5'], ['storeDarkMatter', 'dome', '#a77bff'],
-      ['shipyard', 'hangar', '#ff8c5a'],
+      ['mineFerrite', 'tower', '#d9a066'], ['mineDeuterium', 'tank', '#4fd1c5'], ['darkMatterCollector', 'dish', '#a77bff'],
+      ['storeFerrite', 'cubes', '#d9a066'], ['storeDeuterium', 'cylinder', '#4fd1c5'], ['storeDarkMatter', 'darksphere', '#a77bff'],
+      ['shipyard', 'hangar', '#ff8c5a'], ['jackpot', 'collider', '#a77bff'],
     ];
+    // accélérateur et usine spatiale : un seul bâtiment qui grandit avec le niveau
+    const SINGLE = { jackpot: true, shipyard: true };
     const rnd = mulberry32(this.seed ^ 0x2545f491), out = { seed: this.seed, list: [] };
+    const vec = (lon, lat) => [Math.cos(lat) * Math.sin(lon * Math.PI * 2), Math.sin(lat), Math.cos(lat) * Math.cos(lon * Math.PI * 2)];
+    const ang = (p, q) => { const u = vec(p.lon, p.lat), v = vec(q.lon, q.lat); return Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1] + u[2] * v[2]))); };
+    const placed = [];   // tous les emplacements, tous types confondus : { lon, lat, rad }
+    const free = c => placed.every(q => ang(c, q) > c.rad + q.rad);
     kinds.forEach(([id, shape, color], k) => {
-      // centre de la colonie : réparti autour de la planète, loin des pôles
-      const clon = (k / kinds.length + rnd() * 0.08) % 1, clat = (rnd() - 0.5) * 1.0;
-      const sites = Array.from({ length: 6 }, (_, i) => ({
-        lon: clon + (i === 0 ? 0 : (rnd() - 0.5) * 0.09),
-        lat: clat + (i === 0 ? 0 : (rnd() - 0.5) * 0.5),
-      }));
-      out.list.push({ id, shape, color, sites });
+      const single = !!SINGLE[id], rad = single ? 0.23 : 0.13, want = single ? 1 : 6;
+      const sites = [];
+      // centre de la colonie : réparti autour de la planète, loin des pôles, sans toucher les autres
+      let c0 = null;
+      for (let g = 0; g < 300 && !c0; g++) {
+        const c = { lon: (k / kinds.length + (g ? rnd() : rnd() * 0.08)) % 1, lat: (rnd() - 0.5) * (g < 100 ? 1.0 : 1.6), rad };
+        if (free(c)) c0 = c;
+      }
+      if (!c0) c0 = { lon: k / kinds.length, lat: 0, rad };
+      sites.push(c0); placed.push(c0);
+      // autres structures du même type : autour du centre, sans chevauchement
+      for (let g = 0; sites.length < want && g < 600; g++) {
+        const a0 = rnd() * Math.PI * 2, dd = 2 * rad + 0.02 + rnd() * 0.35;
+        const c = { lon: c0.lon + Math.cos(a0) * dd / (2 * Math.PI * Math.max(0.3, Math.cos(c0.lat))), lat: Math.max(-1.2, Math.min(1.2, c0.lat + Math.sin(a0) * dd)), rad };
+        if (free(c)) { sites.push(c); placed.push(c); }
+      }
+      while (sites.length < want) sites.push(null);
+      out.list.push({ id, shape, color, sites, single });
     });
     return (this._sites = out);
   }
 
+  /* Bâtiments en 3D : chaque structure est posée dans le repère local de la surface
+     (est, nord, normale) puis projetée. Elle suit ainsi la rotation de la planète sans pivoter
+     sur elle-même ; les faces sont éclairées selon leur orientation. */
   drawStructures(t, cx, cy, R, levels) {
     const ctx = this.ctx, d = this.dpr;
     let Lx = -0.62, Ly = -0.38, Lz = 0.69; const ln = Math.hypot(Lx, Ly, Lz); Lx /= ln; Ly /= ln; Lz /= ln;
+    const tilt = this.traits.tilt, cT = Math.cos(tilt), sT = Math.sin(tilt);
+    const rot = v => [v[0] * cT + v[1] * sT, -v[0] * sT + v[1] * cT, v[2]];
     const items = [];
     for (const b of this.structureSites().list) {
       const L = levels[b.id] || 0;
       if (!L) continue;
-      const count = Math.min(6, 1 + Math.floor(L / 4));                // plus nombreux avec le niveau
-      const size = R * 0.045 * (1 + 0.05 * Math.min(L, 30));             // plus imposants avec le niveau
+      // un seul bâtiment qui grandit (accélérateur, usine) ou plusieurs (jusqu'à 6) avec le niveau
+      const count = b.single ? 1 : Math.min(6, 1 + Math.floor(L / 4));
+      const size = b.single ? R * 0.055 * (1 + 0.045 * Math.min(L, 30)) : R * 0.06 * (1 + 0.015 * Math.min(L, 30));
       for (let i = 0; i < count; i++) {
-        const p = this.surfacePoint(b.sites[i].lon, b.sites[i].lat, t, cx, cy, R);
-        if (!p) continue;
-        const light = p.nx * Lx + p.ny * Ly + p.depth * Lz;               // éclairage (jour / nuit)
-        items.push({ ...p, b, s: size * (i === 0 ? 1 : 0.75) * Math.sqrt(p.depth), light, i });
+        const st = b.sites[i];
+        if (!st) continue;
+        const A = (st.lon - t * 0.000011 - 0.5) * Math.PI * 2, cl = Math.cos(st.lat), sl = Math.sin(st.lat);
+        const n = rot([cl * Math.sin(A), sl, cl * Math.cos(A)]);
+        if (n[2] < 0.06) continue;                                        // face cachée
+        const e = rot([Math.cos(A), 0, -Math.sin(A)]), no = rot([-sl * Math.sin(A), cl, -sl * Math.cos(A)]);
+        items.push({ x: cx + n[0] * R, y: cy + n[1] * R, n, e, no, depth: n[2], b, i, s: size * (i === 0 ? 1 : 0.75),
+          light: n[0] * Lx + n[1] * Ly + n[2] * Lz });
       }
     }
     items.sort((a, b) => a.depth - b.depth);
+    const shade = (hex, k) => { const v = parseInt(hex.slice(1), 16); const f = c => Math.max(0, Math.min(255, c * k)) | 0; return `rgb(${f((v >> 16) & 255)},${f((v >> 8) & 255)},${f(v & 255)})`; };
     for (const it of items) {
-      const { x, y, s, b } = it;
-      const lit = Math.max(0.35, Math.min(1.15, 0.4 + it.light * 0.9));
-      const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); return `rgb(${((n >> 16) & 255) * k | 0},${((n >> 8) & 255) * k | 0},${(n & 255) * k | 0})`; };
-      // style base militaro-industrielle : métal blindé, plaques, accents de couleur, évents lumineux
-      const metal = shade('#7d8794', lit), metalD = shade('#4a525e', lit), metalDD = shade('#2a3038', lit);
-      const accent = shade(b.color, lit), night = it.light < 0.05;
-      const poly = (pts, fill) => { ctx.beginPath(); pts.forEach(([px, py], k) => k ? ctx.lineTo(x + px * s, y + py * s) : ctx.moveTo(x + px * s, y + py * s)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.stroke(); };
-      const rect = (px, py, w, h, fill) => { ctx.fillStyle = fill; ctx.fillRect(x + px * s, y + py * s, w * s, h * s); };
-      const glow = (px, py, r, col) => {
-        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.shadowBlur = 0;
-        const g = ctx.createRadialGradient(x + px * s, y + py * s, 0, x + px * s, y + py * s, r * s);
+      const { x, y, n, e, no, s, b } = it;
+      const day = Math.max(0.3, Math.min(1.1, 0.45 + it.light * 0.8));   // jour / nuit à cet endroit
+      // repère local → écran
+      const W = (a, bb, h) => [a * e[0] + bb * no[0] + h * n[0], a * e[1] + bb * no[1] + h * n[1], a * e[2] + bb * no[2] + h * n[2]];
+      const P = (a, bb, h) => { const w = W(a, bb, h); return [x + w[0] * s, y + w[1] * s]; };
+      const Z = (a, bb, h) => W(a, bb, h)[2];
+      const lit = v => { const w = W(v[0], v[1], v[2]); return day * Math.max(0.35, Math.min(1.25, 0.55 + 0.7 * (w[0] * Lx + w[1] * Ly + w[2] * Lz))); };
+      const poly = (pts, fill, stroke) => {
+        ctx.beginPath(); pts.forEach((p, k) => { const q = P(p[0], p[1], p[2]); k ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+        ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(0.4, s * 0.025); ctx.stroke(); }
+      };
+      const line = (p, q, col, w) => {
+        const A = P(p[0], p[1], p[2]), B = P(q[0], q[1], q[2]);
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.5, s * w); ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+      };
+      // pavé : seules les faces tournées vers nous sont dessinées
+      const box = (a, bb, h, da, db, dh, col, edge) => {
+        const F = [
+          [[-1, 0, 0], [[a, bb, h], [a, bb + db, h], [a, bb + db, h + dh], [a, bb, h + dh]]],
+          [[1, 0, 0], [[a + da, bb, h], [a + da, bb + db, h], [a + da, bb + db, h + dh], [a + da, bb, h + dh]]],
+          [[0, -1, 0], [[a, bb, h], [a + da, bb, h], [a + da, bb, h + dh], [a, bb, h + dh]]],
+          [[0, 1, 0], [[a, bb + db, h], [a + da, bb + db, h], [a + da, bb + db, h + dh], [a, bb + db, h + dh]]],
+          [[0, 0, 1], [[a, bb, h + dh], [a + da, bb, h + dh], [a + da, bb + db, h + dh], [a, bb + db, h + dh]]],
+        ];
+        for (const [nv, pts] of F) if (W(nv[0], nv[1], nv[2])[2] > 0) poly(pts, shade(col, lit(nv)), edge || 'rgba(0,0,0,.35)');
+      };
+      // cylindre dressé selon la normale
+      const cyl = (a, bb, h, r, H, col, N = 16, capCol) => {
+        for (let k = 0; k < N; k++) {
+          const a0 = k / N * Math.PI * 2, a1 = (k + 1) / N * Math.PI * 2, am = (a0 + a1) / 2;
+          const nv = [Math.cos(am), Math.sin(am), 0];
+          if (W(nv[0], nv[1], 0)[2] <= 0) continue;
+          poly([[a + r * Math.cos(a0), bb + r * Math.sin(a0), h], [a + r * Math.cos(a1), bb + r * Math.sin(a1), h],
+            [a + r * Math.cos(a1), bb + r * Math.sin(a1), h + H], [a + r * Math.cos(a0), bb + r * Math.sin(a0), h + H]], shade(col, lit(nv)));
+        }
+        const cap = []; for (let k = 0; k < N; k++) { const q = k / N * Math.PI * 2; cap.push([a + r * Math.cos(q), bb + r * Math.sin(q), h + H]); }
+        poly(cap, shade(capCol || col, lit([0, 0, 1]) * 1.1), 'rgba(0,0,0,.3)');
+      };
+      // anneau horizontal (moitié arrière ou avant, pour passer derrière / devant un objet)
+      const ring = (h, r, col, w, front) => {
+        const zc = Z(0, 0, h), N = 28;
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.5, s * w); ctx.beginPath();
+        let on = false;
+        for (let k = 0; k <= N; k++) {
+          const q = k / N * Math.PI * 2, a = r * Math.cos(q), bb = r * Math.sin(q), isFront = Z(a, bb, h) >= zc;
+          const pt = P(a, bb, h);
+          if (isFront === front) { on ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]); on = true; } else on = false;
+        }
+        ctx.stroke();
+      };
+      const sphere = (a, bb, h, r, c0, c1, c2) => {
+        const c = P(a, bb, h), rr = r * s;
+        const g = ctx.createRadialGradient(c[0] + Lx * rr * 0.45, c[1] + Ly * rr * 0.45, rr * 0.08, c[0], c[1], rr);
+        g.addColorStop(0, shade(c0, day)); g.addColorStop(0.5, shade(c1, day)); g.addColorStop(1, shade(c2, day));
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c[0], c[1], rr, 0, Math.PI * 2); ctx.fill();
+      };
+      const glow = (a, bb, h, r, col) => {
+        const c = P(a, bb, h);
+        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(c[0], c[1], 0, c[0], c[1], r * s);
         g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x + px * s, y + py * s, r * s, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c[0], c[1], r * s, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       };
-      const hazard = (px, py, w, h) => {                 // bande de danger jaune / noire
-        rect(px, py, w, h, shade('#e8b83a', lit));
-        ctx.fillStyle = metalDD;
-        for (let k = 0; k < w / h; k += 2) ctx.fillRect(x + (px + k * h) * s, y + py * s, h * s, h * s);
+      const blink = (a, bb, h, ph) => {
+        if (Math.sin(t * 0.006 + it.i * 1.7 + ph) < -0.1) return;
+        const c = P(a, bb, h); ctx.fillStyle = 'rgba(255,80,70,0.95)';
+        ctx.beginPath(); ctx.arc(c[0], c[1], Math.max(d * 0.6, s * 0.07), 0, Math.PI * 2); ctx.fill();
       };
-      ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = s * 0.35;
-      ctx.lineWidth = Math.max(0.8, s * 0.06); ctx.lineJoin = 'round'; ctx.strokeStyle = metalDD;
-      // plateforme octogonale commune
-      poly([[-1.25, 0], [-0.95, -0.22], [0.95, -0.22], [1.25, 0], [0.95, 0.2], [-0.95, 0.2]], metalD);
-      ctx.shadowBlur = 0;
-      if (b.shape === 'derrick') {                        // chevalet de pompage (va-et-vient)
-        // chaque pompe a sa propre phase ; un cycle ≈ 2,6 s
-        const ph = t * 0.0024 + it.i * 1.9 + b.sites[0].lon * 20;
-        const rock = Math.sin(ph) * 0.32;                     // inclinaison du balancier (rad)
-        const P = [0.05, -1.25];                              // pivot au sommet du chevalet
-        // socle blindé et bande de danger
-        poly([[-1.0, -0.15], [-0.9, -0.38], [0.9, -0.38], [1.0, -0.15]], metal);
-        hazard(-0.85, -0.3, 1.7, 0.1);
-        // chevalet en A (samson post)
-        poly([[-0.25, -0.38], [P[0] - 0.06, P[1]], [P[0] + 0.06, P[1]], [0.35, -0.38]], metalD);
-        // manivelle + contrepoids (à droite), qui tournent
-        const crank = [0.62, -0.62], cr = 0.22;
-        const cx2 = crank[0] + Math.cos(ph) * cr, cy2 = crank[1] + Math.sin(ph) * cr;
-        rect(0.5, -0.62, 0.24, 0.26, metalD);                 // boîte de réduction
-        ctx.beginPath(); ctx.arc(x + cx2 * s, y + cy2 * s, 0.16 * s, 0, Math.PI * 2); ctx.fillStyle = metalDD; ctx.fill(); ctx.stroke();
-        // balancier : tourne autour du pivot
-        const beam = (bx, by) => [P[0] + bx * Math.cos(rock) - by * Math.sin(rock), P[1] + bx * Math.sin(rock) + by * Math.cos(rock)];
-        const tail = beam(0.55, 0), head = beam(-0.75, 0);
-        // bielle : de la manivelle à l'arrière du balancier
-        ctx.strokeStyle = metalD; ctx.lineWidth = Math.max(1, s * 0.09);
-        ctx.beginPath(); ctx.moveTo(x + cx2 * s, y + cy2 * s); ctx.lineTo(x + tail[0] * s, y + tail[1] * s); ctx.stroke();
-        ctx.strokeStyle = metalDD; ctx.lineWidth = Math.max(0.8, s * 0.06);
-        poly([beam(0.6, -0.07), beam(-0.7, -0.07), beam(-0.7, 0.07), beam(0.6, 0.07)], accent);
-        // tête de cheval (à gauche)
-        poly([beam(-0.68, -0.14), beam(-0.95, -0.08), beam(-1.0, 0.12), beam(-0.95, 0.3), beam(-0.7, 0.14)], metal);
-        // câble qui monte et descend jusqu'à la tête de puits
-        const hx = head[0] - 0.24, hy = head[1] + 0.28;
-        ctx.strokeStyle = metalDD; ctx.lineWidth = Math.max(0.7, s * 0.04);
-        ctx.beginPath(); ctx.moveTo(x + hx * s, y + hy * s); ctx.lineTo(x + hx * s, y - 0.42 * s); ctx.stroke();
-        rect(hx - 0.1, -0.5, 0.2, 0.14, metalD);              // tête de puits
-        ctx.beginPath(); ctx.arc(x + P[0] * s, y + P[1] * s, 0.06 * s, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
-        glow(-0.2, -0.45, 0.4, 'rgba(255,170,80,0.4)');
-      } else if (b.shape === 'tank') {                    // raffinerie : cuves et tuyaux
-        rect(-0.95, -1.15, 0.6, 1.0, metal); rect(0.35, -1.0, 0.6, 0.85, metal);
-        ctx.fillStyle = metalD; ctx.beginPath(); ctx.ellipse(x - 0.65 * s, y - 1.15 * s, 0.3 * s, 0.11 * s, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(x + 0.65 * s, y - 1.0 * s, 0.3 * s, 0.11 * s, 0, 0, Math.PI * 2); ctx.fill();
-        poly([[-0.35, -0.15], [-0.3, -0.75], [0.3, -0.75], [0.35, -0.15]], metalD);
-        rect(-0.38, -0.95, 0.76, 0.1, metalDD); rect(-0.38, -0.6, 0.76, 0.08, metalDD);   // tuyaux
-        rect(-0.9, -0.75, 0.5, 0.1, accent); rect(0.4, -0.65, 0.5, 0.1, accent);
-        glow(0, -0.5, 0.5, 'rgba(79,209,197,0.6)');
-        rect(-0.08, -1.6, 0.16, 0.85, metalD);                // cheminée
-      } else if (b.shape === 'dish') {                    // collecteur : prisme d'énergie sur socle blindé
-        poly([[-0.8, -0.15], [-0.6, -0.6], [0.6, -0.6], [0.8, -0.15]], metal);
-        poly([[-0.55, -0.6], [-0.2, -0.75], [0.2, -0.75], [0.55, -0.6]], metalD);
-        poly([[0, -1.9], [0.3, -1.2], [0, -0.75], [-0.3, -1.2]], accent);   // cristal d'énergie
-        ctx.strokeStyle = metalDD; ctx.beginPath(); ctx.moveTo(x - 0.5 * s, y - 0.65 * s); ctx.lineTo(x - 0.2 * s, y - 1.25 * s); ctx.moveTo(x + 0.5 * s, y - 0.65 * s); ctx.lineTo(x + 0.2 * s, y - 1.25 * s); ctx.stroke();
-        glow(0, -1.3, 0.75, 'rgba(167,123,255,0.7)');
-      } else if (b.shape === 'dome') {                    // entrepôt : bunker blindé
-        poly([[-1.05, -0.15], [-0.85, -0.7], [0.85, -0.7], [1.05, -0.15]], metal);
-        poly([[-0.75, -0.7], [-0.6, -0.95], [0.6, -0.95], [0.75, -0.7]], metalD);
-        rect(-0.3, -0.55, 0.6, 0.4, metalDD);                 // porte
-        rect(-0.3, -0.57, 0.6, 0.06, accent);
-        rect(-0.9, -0.45, 0.4, 0.08, accent); rect(0.5, -0.45, 0.4, 0.08, accent);
-      } else {                                            // usine spatiale : grand hangar à toit incliné
-        poly([[-1.3, -0.15], [-1.2, -1.0], [-0.2, -1.35], [1.2, -1.0], [1.3, -0.15]], metal);
-        poly([[-1.2, -1.0], [-0.2, -1.35], [-0.2, -1.15], [-1.1, -0.85]], metalD);
-        rect(-0.55, -0.8, 1.1, 0.65, metalDD);                 // portes du hangar
-        for (let k = 0; k < 4; k++) rect(-0.55 + k * 0.28, -0.8, 0.02, 0.65, metalD);
-        hazard(-0.55, -0.2, 1.1, 0.1);
-        rect(0.75, -1.75, 0.08, 0.8, metalD); rect(0.3, -1.78, 0.6, 0.08, metalD);   // grue
-        rect(-1.15, -0.7, 0.3, 0.1, accent); rect(0.85, -0.7, 0.3, 0.1, accent);
+      const steel = shade('#9aa4b0', day), accent = shade(b.color, Math.max(0.6, day));
+      ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+      const shape = b.shape;
+      if (shape === 'tower') {                          // mine de ferrite : tour d'acier pyramidale en treillis
+        const H = 3.4, hw = u => 0.1 + 0.8 * Math.pow(1 - u, 2.3), hgt = u => 0.1 + u * H;
+        const C = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+        const pt = (c, u) => [C[c][0] * hw(u), C[c][1] * hw(u), hgt(u)];
+        const lv = [0, 0.12, 0.25, 0.4, 0.55, 0.7, 0.85];
+        // croisillons sur les 4 faces
+        for (let c = 0; c < 4; c++) for (let k = 0; k < lv.length - 1; k++) {
+          const c2 = (c + 1) % 4;
+          line(pt(c, lv[k]), pt(c2, lv[k + 1]), shade('#5d6672', day), 0.03);
+          line(pt(c2, lv[k]), pt(c, lv[k + 1]), shade('#5d6672', day), 0.03);
+        }
+        // arêtes
+        for (let c = 0; c < 4; c++) for (let k = 0; k < 10; k++) line(pt(c, k / 10), pt(c, (k + 1) / 10), steel, 0.08);
+        // plateformes
+        for (const u of [0.25, 0.55]) { const w = hw(u) + 0.12; box(-w, -w, hgt(u), 2 * w, 2 * w, 0.07, b.color); }
+        line([0, 0, hgt(1)], [0, 0, hgt(1) + 0.45], steel, 0.04);
+        glow(0, 0, 0.3, 0.55, 'rgba(255,140,60,0.35)');
+        blink(0, 0, hgt(1) + 0.5, 0);
+      } else if (shape === 'tank') {                    // mine de deutérium : socle et sphère en suspension
+        const ph = t * 0.0025 + it.i * 1.3;
+        cyl(0, 0, 0, 0.75, 0.28, '#7d8794');
+        cyl(0, 0, 0.28, 0.45, 0.2, '#4a525e', 16, '#7fd3ff');
+        const hs = 1.45 + 0.12 * Math.sin(ph);
+        glow(0, 0, (0.5 + hs) / 2, 0.45, 'rgba(127,211,255,0.35)');
+        ring(hs, 0.8, shade('#cfe9ff', day), 0.045, false);
+        sphere(0, 0, hs, 0.5, '#e6fbff', '#4fb8ff', '#0f3a6a');
+        ring(hs, 0.8, shade('#cfe9ff', day), 0.045, true);
+        glow(0, 0, hs, 0.9, `rgba(79,184,255,${0.25 + 0.12 * Math.sin(ph * 2)})`);
+      } else if (shape === 'collider') {                  // accélérateur : anneau de collision métallique avec 4 détecteurs
+        const rt = 0.18, hr = rt, Rr = 1.0, N = 36, parts = [];
+        for (let k = 0; k < N; k++) { const q = k / N * Math.PI * 2; parts.push({ a: Rr * Math.cos(q), b: Rr * Math.sin(q), k }); }
+        for (const d of [0, 1, 2, 3]) { const q = d * Math.PI / 2 + Math.PI / 4; parts.push({ a: Rr * Math.cos(q), b: Rr * Math.sin(q), det: true }); }
+        parts.sort((p1, p2) => Z(p1.a, p1.b, hr) - Z(p2.a, p2.b, hr));
+        for (const pt of parts) {
+          if (pt.det) box(pt.a - 0.22, pt.b - 0.22, 0, 0.44, 0.44, 0.5, '#a77bff');
+          else sphere(pt.a, pt.b, hr, rt, '#e3e9f0', '#9aa4b0', '#4a525e');
+        }
+        cyl(0, 0, 0, 0.32, 0.35, '#d7dee7', 16, '#ffffff');                   // centre de contrôle
+      } else if (shape === 'cubes') {                   // stockage de ferrite : cubes noirs empilés
+        const cubes = [[-0.95, -0.95, 0], [0.05, -0.95, 0], [-0.95, 0.05, 0], [0.05, 0.05, 0], [-0.45, -0.45, 0.9]];
+        cubes.sort((p, q) => (Z(p[0] + 0.45, p[1] + 0.45, p[2]) - Z(q[0] + 0.45, q[1] + 0.45, q[2])) || p[2] - q[2]);
+        for (const [a, bb, h] of cubes) box(a, bb, h, 0.9, 0.9, 0.9, '#23262d', shade('#d9a066', Math.max(0.5, day) * 0.8));
+      } else if (shape === 'cylinder') {                // stockage de deutérium : grand cylindre bleu
+        cyl(0, 0, 0.1, 0.72, 2.0, '#2f7fd6', 20, '#9fd4ff');
+        ring(0.8, 0.72, shade('#0c2440', day), 0.035, true);
+        ring(1.5, 0.72, shade('#0c2440', day), 0.035, true);
+        blink(0, 0, 2.15, 1);
+      } else if (shape === 'darksphere') {              // stockage de matière noire : sphère noire dans une structure d'acier
+        const hs = 1.15, legs = [0, 1, 2, 3].map(k => [Math.cos(k * Math.PI / 2 + 0.785) * 0.95, Math.sin(k * Math.PI / 2 + 0.785) * 0.95]);
+        const back = legs.filter(([a, bb]) => Z(a, bb, hs) < Z(0, 0, hs)), front = legs.filter(l => !back.includes(l));
+        const leg = ([a, bb]) => { line([a, bb, 0.1], [a, bb, 2.1], steel, 0.07); line([a, bb, 0.1], [a * 0.6, bb * 0.6, hs], shade('#6b7480', day), 0.04); };
+        back.forEach(leg);
+        ring(hs, 1.0, steel, 0.06, false); ring(2.1, 0.95, steel, 0.06, false);
+        sphere(0, 0, hs, 0.78, '#4a3a6a', '#120b1f', '#000000');
+        glow(0, 0, hs, 0.95, 'rgba(167,123,255,0.25)');
+        front.forEach(leg);
+        ring(hs, 1.0, steel, 0.06, true); ring(2.1, 0.95, steel, 0.06, true);
+      } else if (shape === 'hangar') {                    // usine spatiale : hangar voûté texturé, tour de contrôle, vaisseaux qui sortent
+        const L = 1.3, Rv = 0.7, N = 16, front = W(1, 0, 0)[2] > 0 ? 1 : -1;
+        const vp = (a, q, r = Rv) => [a, -r * Math.cos(q), r * Math.sin(q)];   // point de la voûte (q de 0 à π)
+        const hall = () => {
+          // pignon arrière
+          const gable = sa => {
+            const pts = []; for (let k = 0; k <= N; k++) pts.push(vp(sa * L, Math.PI * k / N));
+            poly(pts, shade('#c3ccd6', lit([sa, 0, 0])), 'rgba(0,0,0,.35)');
+            // grande porte à lamelles, encadrée d'orange
+            const dw = Rv * 0.5, dh = Rv * 0.68, x0 = sa * L * 1.002;
+            poly([[x0, -dw - 0.05, 0], [x0, dw + 0.05, 0], [x0, dw + 0.05, dh + 0.05], [x0, -dw - 0.05, dh + 0.05]], shade('#ff8c5a', day));
+            poly([[x0, -dw, 0], [x0, dw, 0], [x0, dw, dh], [x0, -dw, dh]], shade('#26313f', day));
+            for (let k = 1; k < 6; k++) line([x0, -dw, dh * k / 6], [x0, dw, dh * k / 6], shade('#3c4a5c', day), 0.018);
+            poly([[x0, -dw, dh * 0.82], [x0, dw, dh * 0.82], [x0, dw, dh], [x0, -dw, dh]], shade('#7fd3ff', Math.max(0.8, day)));   // imposte vitrée
+            // feux de part et d'autre de la porte
+            if (Math.sin(t * 0.006 + it.i) > 0) { glow(x0, -dw - 0.12, 0.12, 0.1, 'rgba(255,209,102,0.95)'); glow(x0, dw + 0.12, 0.12, 0.1, 'rgba(255,209,102,0.95)'); }
+          };
+          gable(-front);
+          // voûte : panneaux longitudinaux aux teintes alternées, verrière au sommet, fenêtres éclairées en bas
+          const P4 = 4;
+          for (let k = 0; k < N; k++) {
+            const q0 = Math.PI * k / N, q1 = Math.PI * (k + 1) / N, qm = (q0 + q1) / 2, nv = [0, -Math.cos(qm), Math.sin(qm)];
+            if (W(nv[0], nv[1], nv[2])[2] <= 0) continue;
+            const glass = k >= 7 && k <= 8, low = k === 1 || k === N - 2;
+            for (let j = 0; j < P4; j++) {
+              const a0 = -L + 2 * L * j / P4, a1 = -L + 2 * L * (j + 1) / P4;
+              const base = glass ? '#8fd0ff' : (j + k) % 2 ? '#f1f4f8' : '#dde3ea';
+              poly([[a0, ...vp(0, q0).slice(1)], [a1, ...vp(0, q0).slice(1)], [a1, ...vp(0, q1).slice(1)], [a0, ...vp(0, q1).slice(1)]],
+                shade(base, lit(nv) * (glass ? 1.05 : 1)), 'rgba(40,50,62,.18)');
+              if (low) for (let w = 0; w < 3; w++) {                                 // fenêtres
+                const wa = a0 + (a1 - a0) * (0.2 + w * 0.25), wb = wa + (a1 - a0) * 0.14, qa = q0 + (q1 - q0) * 0.25, qb = q0 + (q1 - q0) * 0.75;
+                poly([[wa, ...vp(0, qa, Rv * 1.003).slice(1)], [wb, ...vp(0, qa, Rv * 1.003).slice(1)], [wb, ...vp(0, qb, Rv * 1.003).slice(1)], [wa, ...vp(0, qb, Rv * 1.003).slice(1)]],
+                  (w + j + it.i) % 4 ? 'rgba(255,214,130,0.95)' : shade('#33414f', day));
+              }
+            }
+          }
+          // nervures porteuses et bande de rive orange
+          for (const ra of [-1, -0.5, 0, 0.5, 1]) for (let k = 0; k < N; k++) {
+            const q0 = Math.PI * k / N, q1 = Math.PI * (k + 1) / N, nv = [0, -Math.cos((q0 + q1) / 2), Math.sin((q0 + q1) / 2)];
+            if (W(nv[0], nv[1], nv[2])[2] > 0) line(vp(ra * L, q0, Rv * 1.01), vp(ra * L, q1, Rv * 1.01), shade(Math.abs(ra) === 1 ? '#7d8794' : '#a9b3bf', day), Math.abs(ra) === 1 ? 0.05 : 0.03);
+          }
+          for (const sb of [-1, 1]) if (W(0, sb, 0)[2] > 0) line([-L, sb * Rv * 1.01, 0.06], [L, sb * Rv * 1.01, 0.06], shade('#ff8c5a', day), 0.04);
+          gable(front);
+          glow(front * L * 1.1, 0, Rv * 0.3, 0.45, 'rgba(127,211,255,0.35)');
+        };
+        // tour de contrôle : fût à bandes, salle vitrée, antenne et parabole
+        const tower = () => {
+          const ta = 0.55, tb = 1.0;
+          cyl(ta, tb, 0, 0.17, 1.0, '#c3ccd6', 14, '#9aa4b0');
+          cyl(ta, tb, 1.0, 0.3, 0.06, '#7d8794', 16, '#9aa4b0');
+          cyl(ta, tb, 1.06, 0.28, 0.16, '#5fb8ff', 16, '#e9eef4');                  // salle de contrôle vitrée
+          cyl(ta, tb, 1.22, 0.31, 0.04, '#9aa4b0', 16, '#c3ccd6');
+          line([ta, tb, 1.26], [ta, tb, 1.65], shade('#c3ccd6', day), 0.025);
+          sphere(ta + 0.12, tb, 1.36, 0.08, '#ffffff', '#c9d3de', '#7d8794');       // parabole
+          blink(ta, tb, 1.68, 2);
+        };
+        if (Z(0.55, 1.0, 0) < Z(0, 0, 0)) { tower(); hall(); } else { hall(); tower(); }
+        // petits vaisseaux qui sortent par la porte avant et s'éloignent en montant
+        for (let k = 0; k < 3; k++) {
+          const q = (t * 0.00035 + k / 3 + it.i * 0.17) % 1, sa = -1;
+          const pa = -L + sa * (0.1 + q * 2.4), sh = 0.3 + q * q * 2.4, sw = 0.15 + 0.05 * (1 - q);
+          ctx.globalAlpha = Math.min(1, (1 - q) * 2.5);
+          poly([[pa + sa * 0.3, 0, sh], [pa - sa * 0.12, -sw, sh], [pa - sa * 0.02, 0, sh + 0.05], [pa - sa * 0.12, sw, sh]], shade('#e9eef4', Math.max(0.7, day)), 'rgba(0,0,0,.4)');
+          glow(pa - sa * 0.15, 0, sh, 0.2, 'rgba(127,211,255,0.8)');
+          ctx.globalAlpha = 1;
+        }
+      } else {                                            // collecteur : socle et cristal
+        cyl(0, 0, 0, 0.6, 0.5, '#4a525e');
+        sphere(0, 0, 1.0, 0.4, '#e3d4ff', '#a77bff', '#2a1650');
+        glow(0, 0, 1.0, 0.8, 'rgba(167,123,255,0.5)');
       }
-      // feux de position (clignotent) et éclairage nocturne
-      ctx.save(); ctx.globalCompositeOperation = 'lighter';
-      if (Math.sin(t * 0.005 + it.i * 1.7) > 0.2) {
-        ctx.fillStyle = 'rgba(255,80,70,0.95)';
-        ctx.beginPath(); ctx.arc(x - 1.0 * s, y - 0.05 * s, Math.max(d * 0.6, s * 0.07), 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(x + 1.0 * s, y - 0.05 * s, Math.max(d * 0.6, s * 0.07), 0, Math.PI * 2); ctx.fill();
-      }
-      if (night) glow(0, -0.4, 0.9, 'rgba(255,200,120,0.45)');
-      ctx.restore();
+      if (it.light < 0.05) glow(0, 0, 0.4, 0.9, 'rgba(255,200,120,0.35)');   // éclairage nocturne
       ctx.restore();
     }
   }
@@ -728,14 +917,17 @@ class PlanetRenderer {
     const tex = this.tex, cloud = this.cloud, lights = this.lights, emis = this.emissive, TW = this.TW;
     const data = this.img.data;
     const atm = this.traits.atm;
-    const rot = t * 0.000011, crot = t * 0.0000145;
+    const rot = t * 0.000011, crot = t * 0.0000145, crot2 = t * 0.000022;
+    const cloudHi = this.kind === 'moon' ? 0.35 : 0.75;   // intensité de la couche haute
     const density = opts.lightDensity * 255;
 
     for (let i = 0; i < n; i++) {
       let u = u0[i] + rot; u -= Math.floor(u);
       const ti = row[i] + ((u * TW) | 0);
       let cu = u0[i] + crot; cu -= Math.floor(cu);
-      const ca = cloud[row[i] + ((cu * TW) | 0)] / 255;
+      // deux couches de nuages : basse (texture) + haute, qui défile en sens inverse autour de la planète
+      let cu2 = u0[i] - crot2 + 0.37; cu2 -= Math.floor(cu2);
+      const ca = Math.max(cloud[row[i] + ((cu * TW) | 0)] / 255, cloud[row[i] + ((cu2 * TW) | 0)] / 255 * cloudHi);
 
       let r = tex[ti * 3], g = tex[ti * 3 + 1], b = tex[ti * 3 + 2];
       // calme intersidéral : des taches de forêt s'étendent (sous les nuages)
@@ -814,8 +1006,8 @@ class PlanetRenderer {
     ctx.fillStyle = ring;
     ctx.beginPath(); ctx.arc(cx, cy, R * 1.08, 0, Math.PI * 2); ctx.fill();
 
+    if (opts.buildings) this.drawStructures(t, cx, cy, R, opts.buildings);   // bâtiments avant les lunes qui passent devant
     orbiters.filter(o => o.z >= 0).forEach(o => this.drawOrbiter(o));
-    if (opts.buildings) this.drawStructures(t, cx, cy, R, opts.buildings);
     this.drawFire(t, cx, cy, R);
     this.drawTaxShip(t, cx, cy, R);
     this.drawBooms(t, cx, cy, R);

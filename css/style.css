@@ -418,7 +418,8 @@ textarea {
 .btn-ship + .btn-ship { border-left: 1px solid rgba(0, 0, 0, .4); }
 .btn-ship:disabled { background: #1a2333; color: #66758c; }
 
-.casino .auto-tg { top: 5px; left: 5px; bottom: auto; right: auto; }
+/* prix de l'Espérance : alignés en bas avec ceux de la Puissance ; décalés à gauche du bouton AUTO s'il est là */
+.casino .tile-art:has(.auto-tg) .art-costs.right { right: 54px; }
 
 /* Menaces pirates (sous la planète) */
 .threats { width: 100%; max-width: 520px; margin-top: 14px; }
@@ -664,3 +665,109 @@ textarea {
 /* bloc planète : défilement sans barre visible */
 .planet-panel { scrollbar-width: none; -ms-overflow-style: none; }
 .planet-panel::-webkit-scrollbar { display: none; width: 0; }
+
+/* Ligne « en cours » du tableau des événements */
+.th-list li.current { background: color-mix(in srgb, var(--c) 18%, #0a1220); border-left-width: 5px; }
+.th-list li.current .th-name { color: #fff; font-weight: 700; }
+.th-list li.current .th-when { color: var(--c); font-weight: 700; }
+/* boutons d'échange avec ratio */
+.swap-grid .btn.mini { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Conquête galactique */
+.map-node.clan circle, .map-node.mine circle { fill: var(--c); stroke: #050811; stroke-width: .5; filter: drop-shadow(0 0 1.2px var(--c)); }
+.map-node.reachable circle { stroke: #fff; stroke-width: .6; stroke-dasharray: 1 .6; }
+.map-node text { fill: #dfe7f2; }
+.map-node text.g { font-size: 2.3px; fill: var(--c); font-weight: 700; }
+.map-edge.on { stroke: var(--c); opacity: .55; stroke-dasharray: none; }
+.clan-chip { display: inline-block; margin: 2px 3px 0 0; padding: 0 6px; border-radius: 8px; font-size: 11px; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 50%, transparent); }
+.map-news { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+.map-news li { padding: 2px 0; border-bottom: 1px solid rgba(28, 51, 84, .5); }
+
+/* Chrono de la partie (en haut à droite du bloc planète) */
+.game-clock { position: absolute; top: 10px; right: 14px; z-index: 3; font: 600 13px var(--font-title, inherit); color: #9fb3cc;
+  font-variant-numeric: tabular-nums; letter-spacing: 1px; background: rgba(10, 18, 32, 0.7); border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 8px; pointer-events: none; }
+
+/* force de frappe ennemie en rouge */
+.map-node.clan text.g { fill: #ff5d5d; }
+.enemy-pow { color: #ff5d5d; }
+/* Carte galactique : flèches rouges des attaques entre clans */
+.map-flights { pointer-events: none; }
+.flight .fl-path { stroke: #ff4d4d; stroke-width: .3; stroke-dasharray: .8 .8; opacity: .45; }
+.flight .fl-trail { stroke: #ff4d4d; stroke-width: .55; stroke-linecap: round; filter: drop-shadow(0 0 .8px #ff4d4d); }
+.flight .fl-ship { fill: #ff6b6b; stroke: #2a0606; stroke-width: .2; filter: drop-shadow(0 0 1px #ff4d4d); }
+
+/* Carte galactique affichée à la place de la planète */
+.galaxy-view { width: 100%; max-width: 640px; margin: 12px auto 0; }
+.galaxy-view:empty { display: none; }
+.galaxy-view .map-wrap { grid-template-columns: 1fr; gap: 8px; margin-top: 8px; }
+
+/* Carte galactique : défenders perdus, au-dessus du système */
+.map-hit { font: 700 3px var(--font-title, sans-serif); text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #050811; stroke-width: .6px; }
+.map-hit.lose { fill: #ff5d5d; }
+.map-hit.win { fill: #ffd166; }
+
+/* Onglet Galaxie : tableau des planètes concurrentes */
+.th-list li.rival { cursor: pointer; }
+.th-list li.rival:hover { background: rgba(30, 44, 70, .7); }
+.th-list li.rival.sel { background: color-mix(in srgb, var(--c) 18%, #0a1220); border-left-width: 5px; }
+.th-list li.rival .th-name { color: #e6edf7; }
+.rv-clan { color: var(--c); font-size: 11px; margin-left: 4px; }
+.rv-reach { color: #4fc3ff !important; font-size: 11px; font-weight: 700; }
+
+/* Onglet Galaxie : attaques à venir */
+.th-list li.atk { cursor: pointer; }
+.th-list li.atk:hover { background: rgba(30, 44, 70, .7); }
+.th-list li.atk .th-name { color: #e6edf7; font-size: 13px; }
+.th-list li.atk.vs-you { background: rgba(60, 20, 20, .45); }
+.th-list li.atk.vs-you.ok .th-pow { color: var(--good); }
+.atk-arrow { color: #ff5d5d; }
+.atk-you { color: #4fc3ff; }
+/* historique des pertes de defenders (à la place des explorers) */
+.fleet li.fl-losses { align-items: flex-start; text-align: left; font-size: 12px; }
+.fl-lh-title { font: 700 11px var(--font-title); letter-spacing: 1px; color: #9fb0c8; text-transform: uppercase; display: block; margin-bottom: 3px; }
+.fl-losses ol { list-style: none; margin: 0; padding: 0; }
+.fl-losses ol li { padding: 1px 0; color: #c9d6e8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-losses ol li b { display: inline-block; min-width: 34px; color: #ff5d5d; }
+.fl-losses ol li.win b { color: #ffd166; }
+.fl-losses ol li { display: flex; flex-direction: row; align-items: baseline; padding: 1px 0; background: none; border: 0; gap: 6px; justify-content: flex-start; text-align: left; }
+.fl-losses ol li b { min-width: 0; }
+
+/* Carte : defenders postés au-dessus des planètes */
+.map-node text.dep { font-size: 2.2px; font-weight: 700; fill: #4fc3ff; paint-order: stroke; stroke: #050811; stroke-width: .5px; }
+/* barre du tour de la carte : suit exactement le chrono */
+.th-bar i.map-bar { transition: none; }
+.th-list li.atk.yours { background: rgba(20, 45, 70, .5); }
+.th-list li.atk.yours.ok .th-pow { color: var(--good); }
+.th-list li.atk.yours.wait .th-pow { color: #9fb0c8; }
+.flight.you .fl-path, .flight.you .fl-trail { stroke: #4fc3ff; filter: drop-shadow(0 0 .8px #4fc3ff); }
+.flight.you .fl-ship { fill: #7fd3ff; stroke: #06142a; }
+.map-hit.gain { fill: #5fd38d; font-size: 2.6px; }
+
+/* Mouvements de troupes des clans (planète mère → front), à la couleur du clan */
+.flight.move .fl-path { stroke: var(--mc); opacity: .35; }
+.flight.move .fl-trail { stroke: var(--mc); filter: none; opacity: .8; stroke-width: .4; }
+.flight.move .fl-ship { fill: var(--mc); filter: none; }
+
+/* Carte galactique : pleine largeur du bloc, pas de sélection de texte, étoiles qui scintillent */
+.galaxy-view { max-width: none; }
+.galaxy-view, .galaxy-view * { user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.map-stars circle { fill: #fff; animation: mapTwinkle 3s ease-in-out infinite; pointer-events: none; }
+@keyframes mapTwinkle { 0%, 100% { opacity: .15; } 50% { opacity: .9; } }
+
+/* Carte galactique : sans bordure ; pertes à la même taille que les nombres de destroyers */
+.galaxy-view .galaxy { border: 0; }
+.map-hit, .map-hit.gain { font-size: 2.3px; stroke-width: .45px; }
+
+/* Carte galactique : avantages de production en bas à gauche de la carte, en plus gros */
+.galaxy-view .map-wrap { position: relative; }
+.galaxy-view .map-side { position: absolute; left: 10px; bottom: 10px; pointer-events: none; }
+.galaxy-view .map-bonus { font: 700 16px var(--font); color: #e6edf7; background: rgba(5, 8, 17, .7); border: 0; border-radius: var(--radius); padding: 6px 10px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.galaxy-view .map-bonus .rl { width: 20px; height: 20px; }
+/* Accélérateur : prix plus compacts, pour rester sous le badge du niveau */
+.casino .art-costs { gap: 1px; }
+.casino .art-costs .cost { font: 700 11px/14px var(--font); padding: 0 5px 0 2px; }
+.casino .art-costs .cost .rl { width: 11px; height: 11px; }
+
+/* Compteur de clics de minage, sous le chrono */
+.game-clock.click-count { top: 38px; }
