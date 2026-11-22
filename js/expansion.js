@@ -90,6 +90,9 @@ function genMap(seed) {
 /* ================= Logique ================= */
 Object.assign(G, {
   /* --- expéditions --- */
+  /* Hypervitesse : −15 % de durée d'expédition par niveau */
+  expedDuration(id = 'voyage', L = S.click.hyperspeed || 0) { return EXPEDITIONS[id].dur * Math.pow(0.85, L); },
+
   /* puissance d'exploration d'un groupe de vaisseaux */
   shipsPower(ships) { return Object.keys(SHIPS).reduce((a, id) => a + (ships[id] || 0) * SHIPS[id].explore, 0); },
   explorePower() { return this.shipsPower(S.fleet); },
@@ -108,7 +111,7 @@ Object.assign(G, {
     if (!n) return { ok: false, msg: 'Aucun explorer disponible : construisez des explorers (vaisseaux d\'exploration).' };
     for (const t in SHIPS) S.fleet[t] -= ships[t];
     const now = Date.now();
-    S.exped[id] = { start: now, end: now + EXPEDITIONS[id].dur * 1000, ships, P: this.shipsPower(ships) };
+    S.exped[id] = { start: now, end: now + this.expedDuration(id) * 1000, ships, P: this.shipsPower(ships) };
     this.emit(`Expédition « ${EXPEDITIONS[id].name} » lancée (${n} vaisseau${n > 1 ? 'x' : ''})`, 'info', true);
     return { ok: true };
   },
@@ -119,18 +122,44 @@ Object.assign(G, {
       lost[t] = Math.min(e.ships[t], Math.round(e.ships[t] * lossRatio));
       S.fleet[t] += e.ships[t] - lost[t];
     }
-    const sent = Object.values(e.ships).reduce((a, b) => a + b, 0);
-    const base = d.reward(sent), got = {};
-    for (const r in base) { got[r] = Math.max(0, Math.min(base[r], caps[r] - S.res[r])); S.res[r] += got[r]; }
+    const sent = Object.values(e.ships).reduce((a, b) => a + b, 0), got = {};
+    const found = this.rollArtifact(sent);
     const trophy = !!d.trophy && Math.random() < d.trophy;
     if (trophy) S.raid.trophies++;
     S.stats.expeds++;
     delete S.exped[id];
     const nLost = Object.values(lost).reduce((a, b) => a + b, 0);
-    const gains = Object.keys(got).filter(r => got[r] >= 1).map(r => `+${fmtCost(got[r])} ${RESOURCES[r].name.toLowerCase()}`).join(', ');
-    this.emit(`Retour de l'expédition « ${d.name} » : ${gains || 'aucun butin'}${trophy ? ', 🏆 trophée' : ''}${nLost ? `, ${nLost} vaisseau${nLost > 1 ? 'x' : ''} perdu${nLost > 1 ? 's' : ''}` : ''}`, 'success', true);   // journal seulement : le message s'affiche sous « Explorer »
-    return { kind: 'exped', id, got, lost, trophy };
+    const gains = Object.entries(this.artifactCounts(found)).map(([a, k]) => `${ARTIFACTS[a].icon} ${ARTIFACTS[a].name}${k > 1 ? ' ×' + k : ''}`).join(', ');
+    this.emit(`Retour de l'expédition : ${gains || 'aucun artefact'}${trophy ? ', 🏆 trophée' : ''}${nLost ? `, ${nLost} vaisseau${nLost > 1 ? 'x' : ''} perdu${nLost > 1 ? 's' : ''}` : ''}`, 'success', true);   // journal seulement : le message s'affiche sous « Explorer »
+    return { kind: 'exped', id, got, lost, trophy, found, score: this.lastScore || 0 };
   },
+
+  /* Score d'expédition = nombre d'explorers × aléatoire [0, 1).
+     Le joueur reçoit le meilleur artefact accessible : celui au seuil le plus élevé ≤ score
+     (parmi ceux pas encore au maximum ; tirage au hasard entre artefacts de même seuil). */
+  /* Plusieurs artefacts possibles : on prend à chaque fois le meilleur artefact dont le seuil
+     tient dans les points restants, jusqu'à ne plus rien pouvoir payer.
+     La somme des seuils obtenus est donc ≤ score, et s'en approche au maximum. */
+  rollArtifact(n) {
+    const score = n * Math.random();
+    this.lastScore = score;
+    let rest = score;
+    const found = [];
+    for (let guard = 0; guard < 1000; guard++) {
+      const pool = Object.keys(ARTIFACTS).filter(id => ARTIFACTS[id].pts <= rest);
+      if (!pool.length) break;
+      const best = Math.max(...pool.map(id => ARTIFACTS[id].pts));
+      const top = pool.filter(id => ARTIFACTS[id].pts === best);
+      const id = top[Math.floor(Math.random() * top.length)];
+      S.artifacts[id] = this.art(id) + 1;
+      rest -= ARTIFACTS[id].pts;
+      found.push(id);
+    }
+    if (found.length) this.rev++;
+    return found;
+  },
+  /* « ☄️ ×2 · 🧭 » : regroupe une liste d'artefacts par type */
+  artifactCounts(list) { const c = {}; for (const id of list || []) c[id] = (c[id] || 0) + 1; return c; },
 
   /* --- carte galactique --- */
   map() { if (!this._map || this._map.seed !== S.map.seed) this._map = genMap(S.map.seed); return this._map; },
@@ -295,11 +324,35 @@ Object.assign(UI, {
 
   /* Retour des explorers : message sous le mot « Explorer » de la flotte (8 s) */
   RETURN_MSG_MS: 8000,
+  /* Message flottant au-dessus du logo d'un vaisseau de la flotte (sous la planète) */
+  floatOverShip(shipId, html, cls) {
+    const panel = document.querySelector('.planet-panel');
+    const ico = document.querySelector(`#fleet li[data-ship="${shipId}"] .fl-ico`);
+    if (!panel || !ico) return;
+    panel.querySelectorAll(`.ship-float[data-ship="${shipId}"]`).forEach(e => e.remove());
+    const pr = panel.getBoundingClientRect(), ir = ico.getBoundingClientRect();
+    const f = document.createElement('div');
+    f.className = `floater raid-float ship-float ${cls}`;
+    f.dataset.ship = shipId;
+    f.innerHTML = html;
+    f.style.left = (ir.left + ir.width / 2 - pr.left) + 'px';
+    f.style.top = (ir.top - pr.top + panel.scrollTop - 52) + 'px';
+    f.style.setProperty('--dx', '0px');
+    panel.appendChild(f);
+    setTimeout(() => f.remove(), 6500);
+  },
+
+  /* Retour d'expédition : message au-dessus du logo des explorers */
   expedBanner(r) {
-    this.lastReturn = { ...r, t: Date.now() };
-    G.rev++;
-    clearTimeout(this.returnTimer);
-    this.returnTimer = setTimeout(() => { this.lastReturn = null; G.rev++; }, this.RETURN_MSG_MS);
+    const counts = Object.entries(G.artifactCounts(r.found)).sort((a, b) => ARTIFACTS[b[0]].pts - ARTIFACTS[a[0]].pts);
+    const nLost = Object.values(r.lost).reduce((a, b) => a + b, 0);
+    const list = counts.map(([a, k]) => `<span style="color:${ARTIFACT_RARITY[ARTIFACTS[a].rarity].color}">${ARTIFACTS[a].icon}×${k}</span>`).join(' ');   // logo + nombre (sans le nom)
+    const html = `<em class="jp raidt">🚀 Retour d'expédition</em>`
+      + (list || '<span class="muted">Aucun artefact</span>')
+      + ` <span class="muted">· ${Math.floor(r.score || 0)} pts</span>`
+      + (r.trophy ? ' <span class="trophy">🏆</span>' : '')
+      + (nLost ? ` <span class="muted">· −${nLost}</span>` : '');
+    this.floatOverShip('frigate', html, 'win');
   },
   expedReturnHTML() {
     const r = this.lastReturn;

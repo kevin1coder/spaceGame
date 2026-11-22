@@ -73,7 +73,7 @@ b { color: #fff; font-weight: 700; }
 .planet-panel {
   border-right: 1px solid var(--line);
   background: radial-gradient(circle at 50% 40%, rgba(40, 60, 120, 0.18), transparent 65%), rgba(4, 7, 14, 0.6);
-  padding: 18px 22px; overflow-y: auto;
+  padding: 18px 22px; overflow-y: auto; position: relative;
   display: flex; flex-direction: column; align-items: center;
 }
 .planet-head { display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -426,7 +426,7 @@ textarea {
 .th-bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffb347, #ff5d5d); transition: width .2s linear; }
 .th-list { list-style: none; margin: 0; padding: 0; }
 .th-list li {
-  display: grid; grid-template-columns: 70px 1fr 70px 48px; align-items: center; gap: 8px;
+  display: grid; grid-template-columns: 1fr 70px 48px; align-items: center; gap: 8px;
   padding: 5px 8px; border-left: 3px solid var(--c); margin-bottom: 4px; border-radius: 0 var(--radius) var(--radius) 0;
   background: rgba(11, 19, 34, .6); font-size: 14px;
 }
@@ -492,7 +492,8 @@ textarea {
 .floater.raid-float.evt .raidt { text-shadow: 0 0 10px currentColor, 0 0 2px #000; }
 
 /* Tableau des probabilités */
-.th-probs { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 8px; }
+.th-probs { display: none; /* masquée pour l'instant */ }
+.th-probs-shown { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 8px; }
 .th-probs-t { font: 700 10px var(--font-title); letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
 .th-pchip { font-size: 12px; padding: 1px 7px; border-radius: 9px; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); background: rgba(11, 19, 34, .6); }
 .th-pchip b { color: #fff; font-weight: 700; }
@@ -638,3 +639,28 @@ textarea {
 .fl-onway .away-left { color: #fff; font-variant-numeric: tabular-nums; }
 .fl-name .away-left { color: #7fd3ff; font-variant-numeric: tabular-nums; }
 .fl-return.fresh { animation: returnIn .4s ease-out; }
+
+.fleet li.zero { opacity: .45; }
+
+.exped-float, .ship-float { position: absolute; z-index: 5; pointer-events: none; white-space: nowrap; }
+
+/* Artefacts (sous le tableau des événements) */
+.arti-row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 8px; }
+.arti { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px 1px 5px; border-radius: 10px; font-size: 14px;
+  background: color-mix(in srgb, var(--c) 28%, #0a1220); border: 1px solid color-mix(in srgb, var(--c) 70%, transparent); box-shadow: 0 0 6px color-mix(in srgb, var(--c) 30%, transparent); }
+/* fond selon la rareté */
+.arti.r-common { background: linear-gradient(180deg, #3a4558, #222b39); }
+.arti.r-rare { background: linear-gradient(180deg, #1f5f9a, #123457); }
+.arti.r-legendary { background: linear-gradient(180deg, #b8741f, #6b3a0c); box-shadow: 0 0 10px rgba(255, 179, 71, .55); }
+.arti b { font: 700 11px var(--font-title); color: #fff; }
+.arti-none { font-size: 12px; }
+
+.th-wave { margin-left: 4px; font-size: 12px; color: #c9d6e8; }
+
+/* titre Artefacts : même style que le titre Événements (taille, liseré, espace dessous ≈ 13 px) */
+.arti-title { margin-top: 14px; }
+.arti-title + .arti-row { margin-top: 13px; }
+
+/* bloc planète : défilement sans barre visible */
+.planet-panel { scrollbar-width: none; -ms-overflow-style: none; }
+.planet-panel::-webkit-scrollbar { display: none; width: 0; }

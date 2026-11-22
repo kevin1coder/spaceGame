@@ -16,7 +16,7 @@
       <ul>
         <li>⛏ <b>Cliquez sur la planète</b> pour extraire vos premiers blocs de ferrite.</li>
         <li>${resIcon('ferrite')}Construisez des <b>mines</b> : elles produiront à votre place.</li>
-        <li>${resIcon('deuterium')}Chaque clic rapporte la production d'une seconde de vos mines (au moins 1 de chaque matériau).</li>
+        <li>${resIcon('deuterium')}Chaque clic rapporte du ferrite : une seconde de production de votre mine de ferrite (au moins 1).</li>
         <li>${resIcon('darkMatter')}Récoltez la <b>matière noire</b> pour les installations et la recherche.</li>
         <li>⚛ Débloquez des <b>technologies</b> et des <b>recherches</b>.</li>
       </ul>
@@ -68,7 +68,7 @@
     // jackpot : un tirage toutes les 10 secondes
     if (S.click.jackpot > 0) {
       G.jackT += dt;
-      if (G.jackT >= G.JACKPOT_PERIOD) { G.jackT -= G.JACKPOT_PERIOD; UI.jackpot(); }
+      if (G.jackT >= G.jackpotPeriod()) { G.jackT -= G.jackpotPeriod(); UI.jackpot(); }
     }
     if (UI.viewKind() === 'm') {
       // vue lune : la lune au centre, la planète mère en orbite
@@ -83,6 +83,7 @@
         lightDensity: Math.min(1, G.usedFields() / 60),
         satellites: Math.min(6, S.buildings.shipyard),
         moons: S.moons.length,
+        moonColors: S.moons.map(m => moonColor(m.seed)),
         ships: Object.keys(SHIPS).flatMap(id => Array(Math.min(12, G.fleetTotal(id))).fill(SHIPS[id].color)),
       });
     }

@@ -58,6 +58,7 @@ const BUILDINGS = {
     cost: { ferrite: 48, deuterium: 24 }, factor: 1.6,
   },
   darkMatterCollector: {
+    hidden: true,   // masquée : la matière noire vient de l'Accélérateur de particules
     name: 'Collecteur de Matière Noire', short: 'Matière noire', cat: 'mines', icon: 'orb', color: RESOURCES.darkMatter.color,
     desc: "Capte la matière noire qui traverse la planète. Ressource rare des technologies avancées.",
     cost: { ferrite: 225, deuterium: 75 }, factor: 1.5,
@@ -203,10 +204,15 @@ const CLICK_TECHS = {
     desc: "Blindage renforcé : chaque niveau protège 5 % des vaisseaux qui auraient dû être détruits lors d'une attaque pirate (jusqu'à 50 %).",
     cost: { ferrite: 30000, deuterium: 15000, darkMatter: 3000 }, factor: 2.5, max: 10,
   },
+  hyperspeed: {
+    type: 'space', name: 'Hypervitesse', short: 'Hypervitesse', icon: 'warp', color: '#7fd3ff',
+    desc: "Propulsion hyperluminique : chaque niveau réduit de 15 % la durée des expéditions des explorers.",
+    cost: { darkMatter: 2000 }, factor: 2.5, max: 8,
+  },
   gate: {
-    type: 'space', name: 'Porte Interstellaire', short: 'Porte stellaire', icon: 'gate', color: '#4fc3ff',
+    type: 'hidden', name: 'Conquête spatiale', short: 'Conquête spatiale', icon: 'gate', color: '#4fc3ff',
     desc: "Ouvre la carte galactique : vous pourrez y envoyer des sondes pour explorer les systèmes voisins.",
-    cost: { ferrite: 25000, deuterium: 12000, darkMatter: 3000 }, factor: 1, max: 1,
+    cost: { darkMatter: 15000 }, factor: 1, max: 1,
   },
   peace: {
     type: 'hidden', name: 'Paix Publique', short: 'Paix publique', icon: 'dove', color: '#e8e3c8',
@@ -215,24 +221,24 @@ const CLICK_TECHS = {
   },
   exchanger: {
     type: 'extraction', name: 'Commerce', short: 'Commerce', icon: 'swap', color: '#4fd1c5',
-    desc: "Échange les matériaux entre eux. Les niveaux 1 à 6 débloquent chacun un nouveau sens d'échange ; les niveaux suivants augmentent le nombre d'unités échangées et rapprochent le ratio de 1:1.",
-    cost: { ferrite: 100 }, factor: 1.6,
+    desc: "Échange les matériaux entre eux. Ratio fixe 3:1. Les niveaux 1 à 6 débloquent chacun un nouveau sens d'échange, et chaque niveau augmente le nombre maximal d'unités échangées.",
+    cost: { ferrite: 500 }, factor: 2,
   },
   jackpot: {
-    type: 'extraction', name: 'Trading Interstellaire', short: 'Trading', icon: 'dice', color: '#ff9f1a',
-    desc: 'Toutes les 10 secondes, une opération de trading : en cas de succès, une quantité aléatoire de matière (5 % des succès sont un JACKPOT ×10). Améliorez le capital (montant gagné) ou l\'espérance (chance de succès).',
+    type: 'extraction', name: 'Accélérateur de particules', short: 'Accélérateur', icon: 'atom', color: '#a77bff',
+    desc: 'Toutes les 10 secondes, une collision de particules : en cas de succès, elle produit une quantité aléatoire de matière noire. Améliorez la puissance (quantité produite) ou l\'espérance (chance de succès).',
     cost: { ferrite: 60, deuterium: 20 }, factor: 1.7,
   },
   /* 2e amélioration du Casino (affichée dans la même tuile) */
   casinoLuck: {
-    type: null, name: 'Espérance du Trading', icon: 'dice', color: '#ff9f1a',
-    desc: 'Augmente la probabilité de succès du Trading Interstellaire.',
-    cost: { ferrite: 80, deuterium: 30 }, factor: 1.7, max: 11,
+    type: null, name: 'Espérance de l\'Accélérateur', icon: 'atom', color: '#a77bff',
+    desc: 'Augmente la probabilité de succès de l\'Accélérateur de particules.',
+    cost: { ferrite: 80, deuterium: 30 }, factor: 1.7, max: 18,
   },
   terraform: {
     type: 'space', name: 'Terraformage', short: 'Terraform.', icon: 'moon', color: '#cfd8e3',
     desc: 'Chaque niveau crée une nouvelle lune (3 maximum) et augmente toute la production de 5 %. Cliquez sur une lune pour la coloniser : mines et compteur de matière propres.',
-    cost: { ferrite: 15000, deuterium: 7500, darkMatter: 1500 }, factor: 4, max: 3,
+    cost: { darkMatter: 10000 }, factor: 5, max: 3,
   },
 
 };
@@ -248,7 +254,7 @@ const SHIPS = {
   },
   frigate: {
     name: 'Explorer', role: 'explore', icon: 'shipFrigate', color: '#7fd3ff',
-    desc: "Vaisseau d'exploration : les explorers partent automatiquement en expédition (30 s) et repartent dès leur retour ; chacun rapporte entre 100 et 10 000 matériaux. Sans armement, il ne défend pas la planète.",
+    desc: "Vaisseau d'exploration : les explorers partent automatiquement en expédition (30 s) et rapportent un artefact selon leur score (explorers × aléatoire) : le meilleur artefact dont le seuil est atteint. Sans armement, il ne défend pas la planète.",
     cost: { ferrite: 4000, deuterium: 2000, darkMatter: 200 }, factor: 1,
     atk: 0, explore: 50,
     req: { buildings: { shipyard: 2 } },
@@ -265,6 +271,28 @@ const MOON_TECHS = {
 };
 
 /* Lignes de technologies (un type par ligne) */
+/* Artefacts : trouvés par les explorers au retour d'expédition.
+   pts : score d'expédition minimum (explorers × aléatoire) ; on reçoit le meilleur accessible.
+   Chaque exemplaire cumule son effet, sans limite de nombre. */
+const ARTIFACT_RARITY = {
+  common:    { name: 'Commun',     color: '#9fb0c8', weight: 60 },
+  rare:      { name: 'Rare',       color: '#4fc3ff', weight: 30 },
+  legendary: { name: 'Légendaire', color: '#ffb347', weight: 10 },
+};
+const ARTIFACTS = {
+  meteor:   { pts: 2, name: 'Fragment de météorite', icon: '☄️', rarity: 'common',    effect: n => `+${2 * n} % de production de ferrite` },
+  frost:    { pts: 5, name: 'Cristal de givre',      icon: '❄️', rarity: 'common',    effect: n => `+${2 * n} % de production de deutérium` },
+  gear:     { pts: 10, name: 'Rouage ancien',         icon: '⚙️', rarity: 'common',    effect: n => `−${2 * n} % sur le coût des mines` },
+  relic:    { pts: 20, name: 'Amphore stellaire',     icon: '🏺', rarity: 'common',    effect: n => `+${10 * n} % de capacité des entrepôts` },
+  compass:  { pts: 35, name: 'Boussole galactique',   icon: '🧭', rarity: 'rare',      effect: n => `+${n} % de toute production` },
+  voidShard:{ pts: 55, name: 'Éclat du vide',         icon: '🔮', rarity: 'rare',      effect: n => `+${5 * n} % de matière noire de l'Accélérateur` },
+  cannon:   { pts: 80, name: 'Canon précurseur',      icon: '🔱', rarity: 'rare',      effect: n => `+${5 * n} % de puissance de feu des destroyers` },
+  aegis:    { pts: 110, name: 'Égide antique',         icon: '🛡️', rarity: 'rare',      effect: n => `+${3 * n} % de vaisseaux protégés (Cuirassé)` },
+  seal:     { pts: 150, name: 'Sceau diplomatique',    icon: '📜', rarity: 'rare',      effect: n => `−${Math.min(100, 10 * n)} % de ressources pillées par les pirates` },
+  hourglass:{ pts: 250, name: 'Sablier temporel',      icon: '⏳', rarity: 'legendary', effect: n => `Accélérateur : une collision toutes les ${Math.max(2, 10 - n)} s (2 s minimum)` },
+  starHeart:{ pts: 400, name: 'Cœur d\'étoile',        icon: '🌟', rarity: 'legendary', effect: n => `+${25 * n} % de ferrite par clic` },
+};
+
 /* Commerce : ordre de déblocage des sens d'échange (un par niveau) */
 const EXCHANGE_PAIRS = [
   ['ferrite', 'deuterium'], ['deuterium', 'ferrite'],
@@ -291,11 +319,11 @@ const MOON_NAMES = ['Alpha', 'Bêta', 'Gamma', 'Delta', 'Epsilon', 'Zêta', 'Th�
 const AUTO_UNLOCKS = [
   { label: 'Mine de Ferrite', ids: ['mineFerrite'] },
   { label: 'Extracteur de Deutérium', ids: ['mineDeuterium'] },
-  { label: 'Collecteur de Matière Noire', ids: ['darkMatterCollector'] },
+  { label: 'Accélérateur de particules', ids: ['trading'] },
   { label: 'Commerce', ids: ['exchanger'] },
   { label: 'Entrepôts', ids: ['storeFerrite', 'storeDeuterium', 'storeDarkMatter'] },
   { label: 'Usine Spatiale, vaisseaux et Cuirassé', ids: ['shipyard', 'destroyer', 'frigate', 'armor'] },
-  { label: 'Trading et Échanges', ids: ['trading', 'xferDeut', 'xferDark', 'peace'] },
+  { label: 'Commerce', ids: ['xferDeut', 'xferDark', 'peace'] },
   { label: 'Mine la plus basse', lowest: true },
 ];
 
@@ -358,7 +386,7 @@ const EVENTS = {
     apply(G) { S.raid.fx.ice = Date.now() + G.RAID_PERIOD * 1000; return { note: 'Production à 10 % pendant 30 s' }; },
   },
   calm: {
-    name: 'Calme intersidéral', kind: 'calm', weight: 15, effect: 'Rien', color: '#9fb0c8',
+    name: 'Calme intersidéral', kind: 'calm', weight: 15, effect: '-', color: '#9fb0c8',
     desc: "L'espace est calme : il ne se passe rien.",
     apply(G) { S.raid.fx.forest = Date.now() + G.RAID_PERIOD * 1000; return { note: "L'espace est calme" }; },   // effet visuel discret : de la végétation pousse sur la planète
   },

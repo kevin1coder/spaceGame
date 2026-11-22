@@ -66,11 +66,24 @@ const LUNAR_TYPE = {
   stops: [[0, '#2f2f34'], [0.35, '#55555b'], [0.6, '#7f7f86'], [0.8, '#a6a6ac'], [1, '#d4d4d9']],
 };
 
+/* Couleurs (clair, foncé) d'une lune vue en orbite, selon son type */
+const _moonColorCache = {};
+function moonColor(seed) {
+  if (_moonColorCache[seed]) return _moonColorCache[seed];
+  const t = planetTraits(seed, 'moon'), st = t.stops;
+  const light = st[Math.floor(st.length * 0.7)][1], dark = st[Math.floor(st.length * 0.35)][1];
+  return (_moonColorCache[seed] = [light, dark]);
+}
+
 function planetTraits(seed, kind = 'planet') {
   const rnd = mulberry32(seed ^ 0x9e3779b9);
   if (kind === 'moon') {
-    const tmin = -170 + Math.floor(rnd() * 30);
-    return { ...LUNAR_TYPE, diameter: 2000 + Math.floor(rnd() * 2500), tmin, tmax: tmin + 120, tilt: (rnd() - 0.5) * 0.4 };
+    // chaque lune reçoit un type de planète tiré au sort (tellurique, désertique, exotique, volcanique),
+    // avec quelques cratères et moins de nuages
+    const mt = PLANET_TYPES[Math.floor(rnd() * PLANET_TYPES.length)];
+    const base = mt.type === 'Volcanique' ? 60 : mt.type === 'Désertique' ? 20 : mt.type === 'Exotique' ? -40 : -20;
+    const tmin = base - 30 + Math.floor(rnd() * 20);
+    return { ...mt, craters: true, clouds: mt.clouds * 0.5, diameter: 2000 + Math.floor(rnd() * 2500), tmin, tmax: tmin + 50, tilt: (rnd() - 0.5) * 0.4 };
   }
   const t = PLANET_TYPES[Math.floor(rnd() * PLANET_TYPES.length)];
   const diameter = 9000 + Math.floor(rnd() * 7000);
@@ -260,6 +273,86 @@ class PlanetRenderer {
   /* Explosions de combat (n explosions échelonnées).
      where : 'space' → dans l'espace autour de la planète (victoire),
              'planet' → sur la surface de la planète (défaite) */
+  /* Victoire : bouclier « champ de force » hexagonal bleu clair autour de la planète (≈ 3,5 s).
+     Des impacts font onduler le bouclier là où les tirs pirates frappent. */
+  shield() {
+    const now = performance.now();
+    this.shieldFx = {
+      start: now,
+      hits: Array.from({ length: 5 }, (_, i) => {
+        const a = Math.random() * Math.PI * 2;
+        return { t0: now + 250 + i * 420 + Math.random() * 200, x: Math.cos(a) * 0.8, y: Math.sin(a) * 0.8 };
+      }),
+    };
+  }
+
+  drawShield(t, cx, cy, R) {
+    const F = this.shieldFx;
+    if (!F) return;
+    const DUR = 3500, age = t - F.start;
+    if (age > DUR) { this.shieldFx = null; return; }
+    const k = Math.min(1, age / 350, (DUR - age) / 900);   // apparition / disparition
+    if (k <= 0) return;
+    const ctx = this.ctx, SR = R * 1.16;                  // rayon du bouclier
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // voile bleu + liseré
+    const veil = ctx.createRadialGradient(cx, cy, SR * 0.55, cx, cy, SR);
+    veil.addColorStop(0, 'rgba(120,210,255,0)');
+    veil.addColorStop(0.85, `rgba(120,210,255,${0.12 * k})`);
+    veil.addColorStop(1, `rgba(170,235,255,${0.45 * k})`);
+    ctx.fillStyle = veil;
+    ctx.beginPath(); ctx.arc(cx, cy, SR, 0, Math.PI * 2); ctx.fill();
+    // impacts actifs (onde qui se propage)
+    const hits = F.hits.map(h => ({ ...h, p: (t - h.t0) / 700 })).filter(h => h.p >= 0 && h.p <= 1);
+    // grille d'hexagones projetée sur une sphère (plus serrés vers le bord)
+    const hs = 0.11, w = Math.sqrt(3) * hs;
+    const sph = (u, v) => {                               // disque plat → aspect sphérique
+      const r = Math.hypot(u, v); if (r < 1e-6) return [cx, cy];
+      const r2 = Math.sin(Math.min(1, r) * Math.PI / 2);
+      return [cx + u / r * r2 * SR, cy + v / r * r2 * SR];
+    };
+    const rot = t * 0.00004;
+    ctx.lineWidth = Math.max(1, this.dpr * 0.9);
+    for (let row = -12; row <= 12; row++) {
+      for (let col = -12; col <= 12; col++) {
+        let hx = col * w + (row & 1 ? w / 2 : 0), hy = row * hs * 1.5;
+        const cr = Math.cos(rot), sr = Math.sin(rot);
+        [hx, hy] = [hx * cr - hy * sr, hx * sr + hy * cr];
+        const d = Math.hypot(hx, hy);
+        if (d > 0.98) continue;
+        // intensité : plus vive au bord, scintillement, renforcée par les impacts
+        let a = 0.12 + 0.45 * Math.pow(d, 3) + 0.08 * Math.sin(t * 0.004 + row * 1.3 + col * 0.7);
+        for (const h of hits) {
+          const dd = Math.hypot(hx - h.x, hy - h.y), front = Math.abs(dd - h.p * 0.9);
+          if (front < 0.12) a += (1 - front / 0.12) * (1 - h.p) * 1.4;
+          if (dd < 0.15) a += (1 - h.p) * 0.8;
+        }
+        a = Math.min(1, a) * k;
+        if (a < 0.03) continue;
+        ctx.beginPath();
+        for (let v = 0; v < 6; v++) {
+          const ang = Math.PI / 6 + v * Math.PI / 3;
+          const [px, py] = sph(hx + Math.cos(ang) * hs * 0.94, hy + Math.sin(ang) * hs * 0.94);
+          v ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = `rgba(90,190,255,${a * 0.1})`;
+        ctx.strokeStyle = `rgba(130,215,255,${a * 0.8})`;
+        ctx.fill(); ctx.stroke();
+      }
+    }
+    // éclat aux points d'impact
+    for (const h of hits) {
+      const [px, py] = sph(h.x, h.y), r = SR * 0.22 * (0.4 + h.p);
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, `rgba(230,250,255,${(1 - h.p) * 0.9 * k})`);
+      g.addColorStop(1, 'rgba(120,210,255,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   explode(n = 6, where = 'space') {
     const now = performance.now();
     this.booms = this.booms || [];
@@ -278,13 +371,14 @@ class PlanetRenderer {
 
   /* Impôt galactique : un gros vaisseau collecteur arrive, se pose au-dessus de la planète
      (faisceau de prélèvement) puis repart. Durée totale ≈ 9 s. */
+  TAX_ARRIVE_MS = 2600;   // arrivée du vaisseau : le faisceau s'allume ensuite
   taxShip() { this.tax = { start: performance.now() }; }
 
   drawTaxShip(t, cx, cy, R) {
     const T = this.tax;
     if (!T) return;
     const W = this.canvas.width, age = t - T.start;
-    const ARRIVE = 2600, STAY = 4200, LEAVE = 2400;
+    const ARRIVE = this.TAX_ARRIVE_MS, STAY = 4200, LEAVE = 2400;
     if (age > ARRIVE + STAY + LEAVE) { this.tax = null; return; }
     const ease = p => p < 0 ? 0 : p > 1 ? 1 : 1 - Math.pow(1 - p, 3);
     const easeIn = p => p < 0 ? 0 : p > 1 ? 1 : p * p * p;
@@ -443,38 +537,99 @@ class PlanetRenderer {
       const { x, y, s, b } = it;
       const lit = Math.max(0.35, Math.min(1.15, 0.4 + it.light * 0.9));
       const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); return `rgb(${((n >> 16) & 255) * k | 0},${((n >> 8) & 255) * k | 0},${(n & 255) * k | 0})`; };
-      const body = shade(b.color, lit), dark = shade('#3a404c', lit), night = it.light < 0.05;
+      // style base militaro-industrielle : métal blindé, plaques, accents de couleur, évents lumineux
+      const metal = shade('#7d8794', lit), metalD = shade('#4a525e', lit), metalDD = shade('#2a3038', lit);
+      const accent = shade(b.color, lit), night = it.light < 0.05;
+      const poly = (pts, fill) => { ctx.beginPath(); pts.forEach(([px, py], k) => k ? ctx.lineTo(x + px * s, y + py * s) : ctx.moveTo(x + px * s, y + py * s)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); ctx.stroke(); };
+      const rect = (px, py, w, h, fill) => { ctx.fillStyle = fill; ctx.fillRect(x + px * s, y + py * s, w * s, h * s); };
+      const glow = (px, py, r, col) => {
+        ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.shadowBlur = 0;
+        const g = ctx.createRadialGradient(x + px * s, y + py * s, 0, x + px * s, y + py * s, r * s);
+        g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x + px * s, y + py * s, r * s, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      };
+      const hazard = (px, py, w, h) => {                 // bande de danger jaune / noire
+        rect(px, py, w, h, shade('#e8b83a', lit));
+        ctx.fillStyle = metalDD;
+        for (let k = 0; k < w / h; k += 2) ctx.fillRect(x + (px + k * h) * s, y + py * s, h * s, h * s);
+      };
       ctx.save();
-      ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = s * 0.35;   // détache le bâtiment du sol
-      ctx.lineWidth = Math.max(1.2, s * 0.18); ctx.lineJoin = 'round';
-      ctx.strokeStyle = body; ctx.fillStyle = body;
-      if (b.shape === 'derrick') {                        // tour de forage
-        ctx.beginPath(); ctx.moveTo(x - s * 0.55, y); ctx.lineTo(x, y - s * 1.9); ctx.lineTo(x + s * 0.55, y);
-        ctx.moveTo(x - s * 0.36, y - s * 0.6); ctx.lineTo(x + s * 0.36, y - s * 0.6);
-        ctx.moveTo(x - s * 0.18, y - s * 1.2); ctx.lineTo(x + s * 0.18, y - s * 1.2); ctx.stroke();
-        ctx.fillStyle = dark; ctx.fillRect(x - s * 0.7, y - s * 0.12, s * 1.4, s * 0.24);
-      } else if (b.shape === 'tank') {                    // réservoir sphérique sur pieds
-        ctx.strokeStyle = dark;
-        ctx.beginPath(); ctx.moveTo(x - s * 0.45, y); ctx.lineTo(x - s * 0.3, y - s * 0.7); ctx.moveTo(x + s * 0.45, y); ctx.lineTo(x + s * 0.3, y - s * 0.7); ctx.stroke();
-        ctx.beginPath(); ctx.arc(x, y - s * 1.05, s * 0.55, 0, Math.PI * 2); ctx.fill();
-      } else if (b.shape === 'dish') {                    // collecteur : antenne parabolique
-        ctx.strokeStyle = dark;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * 0.9); ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(x, y - s * 1.15, s * 0.75, s * 0.32, -0.35, 0, Math.PI * 2); ctx.fill();
-      } else if (b.shape === 'dome') {                    // entrepôt : dôme
-        ctx.beginPath(); ctx.arc(x, y, s * 0.75, Math.PI, 0); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = dark; ctx.fillRect(x - s * 0.85, y - s * 0.06, s * 1.7, s * 0.18);
-      } else {                                            // usine spatiale : hangar
-        ctx.beginPath(); ctx.moveTo(x - s * 1.1, y); ctx.lineTo(x - s * 1.1, y - s * 0.7); ctx.quadraticCurveTo(x, y - s * 1.35, x + s * 1.1, y - s * 0.7); ctx.lineTo(x + s * 1.1, y); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = dark; ctx.fillRect(x - s * 0.4, y - s * 0.5, s * 0.8, s * 0.5);
+      ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = s * 0.35;
+      ctx.lineWidth = Math.max(0.8, s * 0.06); ctx.lineJoin = 'round'; ctx.strokeStyle = metalDD;
+      // plateforme octogonale commune
+      poly([[-1.25, 0], [-0.95, -0.22], [0.95, -0.22], [1.25, 0], [0.95, 0.2], [-0.95, 0.2]], metalD);
+      ctx.shadowBlur = 0;
+      if (b.shape === 'derrick') {                        // chevalet de pompage (va-et-vient)
+        // chaque pompe a sa propre phase ; un cycle ≈ 2,6 s
+        const ph = t * 0.0024 + it.i * 1.9 + b.sites[0].lon * 20;
+        const rock = Math.sin(ph) * 0.32;                     // inclinaison du balancier (rad)
+        const P = [0.05, -1.25];                              // pivot au sommet du chevalet
+        // socle blindé et bande de danger
+        poly([[-1.0, -0.15], [-0.9, -0.38], [0.9, -0.38], [1.0, -0.15]], metal);
+        hazard(-0.85, -0.3, 1.7, 0.1);
+        // chevalet en A (samson post)
+        poly([[-0.25, -0.38], [P[0] - 0.06, P[1]], [P[0] + 0.06, P[1]], [0.35, -0.38]], metalD);
+        // manivelle + contrepoids (à droite), qui tournent
+        const crank = [0.62, -0.62], cr = 0.22;
+        const cx2 = crank[0] + Math.cos(ph) * cr, cy2 = crank[1] + Math.sin(ph) * cr;
+        rect(0.5, -0.62, 0.24, 0.26, metalD);                 // boîte de réduction
+        ctx.beginPath(); ctx.arc(x + cx2 * s, y + cy2 * s, 0.16 * s, 0, Math.PI * 2); ctx.fillStyle = metalDD; ctx.fill(); ctx.stroke();
+        // balancier : tourne autour du pivot
+        const beam = (bx, by) => [P[0] + bx * Math.cos(rock) - by * Math.sin(rock), P[1] + bx * Math.sin(rock) + by * Math.cos(rock)];
+        const tail = beam(0.55, 0), head = beam(-0.75, 0);
+        // bielle : de la manivelle à l'arrière du balancier
+        ctx.strokeStyle = metalD; ctx.lineWidth = Math.max(1, s * 0.09);
+        ctx.beginPath(); ctx.moveTo(x + cx2 * s, y + cy2 * s); ctx.lineTo(x + tail[0] * s, y + tail[1] * s); ctx.stroke();
+        ctx.strokeStyle = metalDD; ctx.lineWidth = Math.max(0.8, s * 0.06);
+        poly([beam(0.6, -0.07), beam(-0.7, -0.07), beam(-0.7, 0.07), beam(0.6, 0.07)], accent);
+        // tête de cheval (à gauche)
+        poly([beam(-0.68, -0.14), beam(-0.95, -0.08), beam(-1.0, 0.12), beam(-0.95, 0.3), beam(-0.7, 0.14)], metal);
+        // câble qui monte et descend jusqu'à la tête de puits
+        const hx = head[0] - 0.24, hy = head[1] + 0.28;
+        ctx.strokeStyle = metalDD; ctx.lineWidth = Math.max(0.7, s * 0.04);
+        ctx.beginPath(); ctx.moveTo(x + hx * s, y + hy * s); ctx.lineTo(x + hx * s, y - 0.42 * s); ctx.stroke();
+        rect(hx - 0.1, -0.5, 0.2, 0.14, metalD);              // tête de puits
+        ctx.beginPath(); ctx.arc(x + P[0] * s, y + P[1] * s, 0.06 * s, 0, Math.PI * 2); ctx.fillStyle = accent; ctx.fill();
+        glow(-0.2, -0.45, 0.4, 'rgba(255,170,80,0.4)');
+      } else if (b.shape === 'tank') {                    // raffinerie : cuves et tuyaux
+        rect(-0.95, -1.15, 0.6, 1.0, metal); rect(0.35, -1.0, 0.6, 0.85, metal);
+        ctx.fillStyle = metalD; ctx.beginPath(); ctx.ellipse(x - 0.65 * s, y - 1.15 * s, 0.3 * s, 0.11 * s, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(x + 0.65 * s, y - 1.0 * s, 0.3 * s, 0.11 * s, 0, 0, Math.PI * 2); ctx.fill();
+        poly([[-0.35, -0.15], [-0.3, -0.75], [0.3, -0.75], [0.35, -0.15]], metalD);
+        rect(-0.38, -0.95, 0.76, 0.1, metalDD); rect(-0.38, -0.6, 0.76, 0.08, metalDD);   // tuyaux
+        rect(-0.9, -0.75, 0.5, 0.1, accent); rect(0.4, -0.65, 0.5, 0.1, accent);
+        glow(0, -0.5, 0.5, 'rgba(79,209,197,0.6)');
+        rect(-0.08, -1.6, 0.16, 0.85, metalD);                // cheminée
+      } else if (b.shape === 'dish') {                    // collecteur : prisme d'énergie sur socle blindé
+        poly([[-0.8, -0.15], [-0.6, -0.6], [0.6, -0.6], [0.8, -0.15]], metal);
+        poly([[-0.55, -0.6], [-0.2, -0.75], [0.2, -0.75], [0.55, -0.6]], metalD);
+        poly([[0, -1.9], [0.3, -1.2], [0, -0.75], [-0.3, -1.2]], accent);   // cristal d'énergie
+        ctx.strokeStyle = metalDD; ctx.beginPath(); ctx.moveTo(x - 0.5 * s, y - 0.65 * s); ctx.lineTo(x - 0.2 * s, y - 1.25 * s); ctx.moveTo(x + 0.5 * s, y - 0.65 * s); ctx.lineTo(x + 0.2 * s, y - 1.25 * s); ctx.stroke();
+        glow(0, -1.3, 0.75, 'rgba(167,123,255,0.7)');
+      } else if (b.shape === 'dome') {                    // entrepôt : bunker blindé
+        poly([[-1.05, -0.15], [-0.85, -0.7], [0.85, -0.7], [1.05, -0.15]], metal);
+        poly([[-0.75, -0.7], [-0.6, -0.95], [0.6, -0.95], [0.75, -0.7]], metalD);
+        rect(-0.3, -0.55, 0.6, 0.4, metalDD);                 // porte
+        rect(-0.3, -0.57, 0.6, 0.06, accent);
+        rect(-0.9, -0.45, 0.4, 0.08, accent); rect(0.5, -0.45, 0.4, 0.08, accent);
+      } else {                                            // usine spatiale : grand hangar à toit incliné
+        poly([[-1.3, -0.15], [-1.2, -1.0], [-0.2, -1.35], [1.2, -1.0], [1.3, -0.15]], metal);
+        poly([[-1.2, -1.0], [-0.2, -1.35], [-0.2, -1.15], [-1.1, -0.85]], metalD);
+        rect(-0.55, -0.8, 1.1, 0.65, metalDD);                 // portes du hangar
+        for (let k = 0; k < 4; k++) rect(-0.55 + k * 0.28, -0.8, 0.02, 0.65, metalD);
+        hazard(-0.55, -0.2, 1.1, 0.1);
+        rect(0.75, -1.75, 0.08, 0.8, metalD); rect(0.3, -1.78, 0.6, 0.08, metalD);   // grue
+        rect(-1.15, -0.7, 0.3, 0.1, accent); rect(0.85, -0.7, 0.3, 0.1, accent);
       }
-      // la nuit : petites lumières
-      if (night) {
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.fillStyle = 'rgba(255,210,130,0.9)';
-        ctx.beginPath(); ctx.arc(x, y - s * 0.4, Math.max(d * 0.8, s * 0.14), 0, Math.PI * 2); ctx.fill();
-        if (b.shape === 'derrick' && Math.sin(t * 0.006 + it.i) > 0) { ctx.fillStyle = 'rgba(255,90,90,0.95)'; ctx.beginPath(); ctx.arc(x, y - s * 1.9, Math.max(d * 0.7, s * 0.12), 0, Math.PI * 2); ctx.fill(); }
+      // feux de position (clignotent) et éclairage nocturne
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      if (Math.sin(t * 0.005 + it.i * 1.7) > 0.2) {
+        ctx.fillStyle = 'rgba(255,80,70,0.95)';
+        ctx.beginPath(); ctx.arc(x - 1.0 * s, y - 0.05 * s, Math.max(d * 0.6, s * 0.07), 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x + 1.0 * s, y - 0.05 * s, Math.max(d * 0.6, s * 0.07), 0, Math.PI * 2); ctx.fill();
       }
+      if (night) glow(0, -0.4, 0.9, 'rgba(255,200,120,0.45)');
+      ctx.restore();
       ctx.restore();
     }
   }
@@ -643,6 +798,7 @@ class PlanetRenderer {
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(cx, cy, R * 1.45, 0, Math.PI * 2); ctx.fill();
 
+    this.moonColors = opts.moonColors;
     const orbiters = this.orbiters(t, R, opts.satellites, opts.moons || 0, opts.parent, opts.ships || []);
     this.hot = orbiters.filter(o => o.kind === 'moon' || o.kind === 'parent')
       .map(o => ({ x: o.x, y: o.y, r: o.size, z: o.z, kind: o.kind, index: o.index }));
@@ -663,6 +819,7 @@ class PlanetRenderer {
     this.drawFire(t, cx, cy, R);
     this.drawTaxShip(t, cx, cy, R);
     this.drawBooms(t, cx, cy, R);
+    this.drawShield(t, cx, cy, R);
   }
 
   orbiters(t, R, sats, moonCount, parent, ships = []) {
@@ -680,6 +837,7 @@ class PlanetRenderer {
       const [rad, flat, sp, ph, sz] = ORB[i];
       push(R * rad, flat, t * sp + ph, R * sz, 'moon');
       list[list.length - 1].index = i;
+      list[list.length - 1].colors = this.moonColors;
     }
     // vaisseaux de la flotte (12 visibles au maximum), orientés dans le sens de leur orbite
     ships.slice(0, 12).forEach((color, i) => {
@@ -724,7 +882,8 @@ class PlanetRenderer {
     }
     if (o.kind === 'moon') {
       const g = ctx.createRadialGradient(o.x - o.size * 0.4, o.y - o.size * 0.4, o.size * 0.1, o.x, o.y, o.size);
-      g.addColorStop(0, '#d8d4cc'); g.addColorStop(0.7, '#6d6a66'); g.addColorStop(1, '#2a2928');
+      const mc = (o.colors && o.colors[o.index]) || ['#d8d4cc', '#6d6a66'];
+      g.addColorStop(0, mc[0]); g.addColorStop(0.7, mc[1]); g.addColorStop(1, '#141414');
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(o.x, o.y, o.size, 0, Math.PI * 2); ctx.fill();
       // cratères

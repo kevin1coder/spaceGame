@@ -28,6 +28,7 @@ function newState() {
     view: 'planet',   // corps affiché : 'planet' ou index de la lune (0, 1, 2)
     moons: [],
     fleet: { destroyer: 0, frigate: 0 },   // vaisseaux construits (défense / exploration)
+    artifacts: {},                          // artefacts trouvés en expédition (nombre d'exemplaires)
     raid: { wave: 1, step: 0, last: null, plan: {}, fx: {}, trophies: 0 },   // vagues pirates, événements, trophées
     exped: {},                                                               // expéditions en cours
     ach: {},                                                                 // succès débloqués
@@ -95,7 +96,13 @@ const G = {
   curMoon() { return S.moons[Math.max(0, this.moonIdx())]; },
   INF_CAPS: { ferrite: Infinity, deuterium: Infinity, darkMatter: Infinity },
   /* Compteur utilisé pour payer : chaque lune a le sien */
-  wallet(kind) { return kind === 'm' || kind === 'x' ? this.curMoon().res : S.res; },
+  // le Commerce (niveau commun) se paie et s'utilise avec le compteur du corps affiché
+  wallet(kind, id, auto) {
+    if (kind === 'm' || kind === 'x') return this.curMoon().res;
+    if (kind === 'c' && id === 'exchanger' && !auto && this.moonIdx() >= 0) return this.curMoon().res;
+    return S.res;
+  },
+  shareWallet() { return this.moonIdx() >= 0 ? this.curMoon().res : S.res; },
   /* Production des mines d'une lune (sans stockage : capacité illimitée) */
   moonRates(moon = this.curMoon()) {
     const out = { caps: this.INF_CAPS };
@@ -128,28 +135,31 @@ const G = {
     return got;
   },
 
+  art(id) { return (S && S.artifacts && S.artifacts[id]) || 0; },   // nombre d'exemplaires d'un artefact
+
   costOf(kind, id, level) {
     const def = this.defOf(kind, id);
     const disc = kind === 'b' || kind === 'm' ? Math.pow(0.97, S.techs.ai)
       : kind === 's' ? this.shipDiscount() : 1;
     const infl = S.raid && this.fxActive('inflation') ? 2 : 1;   // hyperinflation
+    const gear = (kind === 'b' || kind === 'm') && MINES[id] ? Math.pow(0.98, this.art('gear')) : 1;   // Rouage ancien
     const out = {};
-    for (const k in def.cost) out[k] = Math.floor(def.cost[k] * Math.pow(def.factor, level - 1) * disc * infl);
+    for (const k in def.cost) out[k] = Math.floor(def.cost[k] * Math.pow(def.factor, level - 1) * disc * infl * gear);
     return out;
   },
 
   mineOutput(id, L) { return MINES[id].base * this.growth(L); },
-  storageCap(L) { return Math.floor(5000 * Math.floor(2.5 * Math.exp(20 * L / 33)) * (1 + 0.1 * S.techs.logistics)); },
+  storageCap(L) { return Math.floor(5000 * Math.floor(2.5 * Math.exp(20 * L / 33)) * (1 + 0.1 * S.techs.logistics + 0.1 * this.art('relic'))); },
 
   rushMult() { return S.raid && this.fxActive('rush') ? 5 : 1; },   // ruée minière : clics ×5
 
   bonus(res) {
     const t = S.techs;
-    const all = 0.03 * ((S.raid && S.raid.trophies) || 0) + 0.01 * this.achCount() + this.mapAllBonus() + 0.02 * t.physics + 0.03 * t.ions + 0.05 * t.hyperspace + 0.05 * S.click.terraform;
+    const all = 0.03 * ((S.raid && S.raid.trophies) || 0) + 0.01 * this.achCount() + this.mapAllBonus() + 0.02 * t.physics + 0.03 * t.ions + 0.05 * t.hyperspace + 0.05 * S.click.terraform + 0.01 * this.art('compass');
     const m = S.raid && this.fxActive('ice') ? 0.1 : 1;   // ère glaciaire
     const map = this.mapResBonus(res);
-    if (res === 'ferrite') return (1 + 0.04 * t.deepDrilling + all + map) * m;
-    if (res === 'deuterium') return (1 + 0.04 * t.deutRefining + all + map) * m;
+    if (res === 'ferrite') return (1 + 0.04 * t.deepDrilling + 0.02 * this.art('meteor') + all + map) * m;
+    if (res === 'deuterium') return (1 + 0.04 * t.deutRefining + 0.02 * this.art('frost') + all + map) * m;
     return (1 + 0.05 * t.dmCondensation + all + map) * m;
   },
 
@@ -244,10 +254,11 @@ const G = {
     return { id, via, rate: id === planned.id ? planned.rate : undefined };
   },
   taxRate() { return (3 + Math.floor(Math.random() * 8)) / 100; },   // 3 à 10 %
-  runEvent(id, via = null, opts = {}) {
+  /* skipStep : le créneau a déjà été consommé (impôt appliqué en différé) */
+  runEvent(id, via = null, opts = {}, skipStep = false) {
     const res = EVENTS[id].apply(this, opts) || {};
     S.raid.last = { type: 'event', id, via, ...res, t: Date.now() };
-    S.raid.step++;
+    if (!skipStep) S.raid.step++;
     this.emit(`${via ? 'Signal inconnu → ' : ''}${EVENTS[id].name}`, EVENTS[id].kind === 'pos' ? 'success' : 'warn', true);
     return S.raid.last;
   },
@@ -298,7 +309,7 @@ const G = {
       S.stats.raidsWon++;
     } else {
       // au prorata de l'écart de puissance : avec la moitié de la puissance des pirates, on perd 5 %
-      const ratio = this.STEAL_MAX * (boss ? 2 : 1) * (1 - Math.min(1, P / E));
+      const ratio = this.STEAL_MAX * (boss ? 2 : 1) * (1 - Math.min(1, P / E)) * Math.max(0, 1 - 0.1 * this.art('seal'));
       for (const r of RES_KEYS) { stolen[r] = S.res[r] * ratio; S.res[r] -= stolen[r]; }
     }
     const tier = this.waveTier(w);
@@ -310,9 +321,9 @@ const G = {
     return S.raid.last;
   },
 
-  armorShare(L = S.click.armor || 0) { return Math.min(0.5, 0.05 * L); },
+  armorShare(L = S.click.armor || 0) { return Math.min(0.65, 0.05 * L + 0.03 * this.art('aegis')); },
 
-  fleetPower() { return Object.keys(SHIPS).reduce((a, id) => a + S.fleet[id] * SHIPS[id].atk, 0); },
+  fleetPower() { return Math.round(Object.keys(SHIPS).reduce((a, id) => a + S.fleet[id] * SHIPS[id].atk, 0) * (1 + 0.05 * this.art('cannon'))); },
   fleetCount() { return Object.values(S.fleet).reduce((a, b) => a + b, 0); },
 
   usedFields() { return Object.values(S.buildings).reduce((a, b) => a + b, 0); },
@@ -323,12 +334,14 @@ const G = {
   /* Robot Mineur : clics automatiques par seconde (0,25/s au niv. 1, ×1,5 par niveau) */
   robotRate(L = S.click.robot) { return L > 0 ? 0.25 * Math.pow(1.5, L - 1) : 0; },
 
-  /* Clic : rapporte la production d'une seconde de chaque mine (au moins 1 de chaque matériau),
+  /* Clic : rapporte la production d'une seconde de chaque mine (au moins 1 ferrite),
      ×5 pendant une ruée minière. body : 'planet' ou index d'une lune */
   clickGains(body = 'planet') {
     const m = this.rushMult(), moon = typeof body === 'number' && S.moons[body];
-    const rt = moon ? this.moonRates(moon) : this.rates(), out = {};
-    for (const r of RES_KEYS) out[r] = Math.max(1, rt[r]) * m;
+    const rt = this.rates(), out = {};   // sur une lune comme sur la planète : production de la planète mère
+    const heart = 1 + 0.25 * this.art('starHeart');
+    // au moins 1 ferrite par clic (production d'une seconde de la mine de ferrite) ; jamais d'autre matériau
+    for (const r of RES_KEYS) out[r] = r === 'ferrite' ? Math.max(1, rt[r]) * m * heart : 0;   // le clic ne rapporte que du ferrite
     return out;
   },
 
@@ -338,7 +351,7 @@ const G = {
     return AUTO_UNLOCKS.slice(0, L).some(u => id === 'lowest' ? u.lowest : (u.ids || []).includes(id));
   },
   lowestMine() {
-    return Object.keys(MINES).reduce((a, b) => S.buildings[b] < S.buildings[a] ? b : a);
+    return Object.keys(MINES).filter(id => !BUILDINGS[id].hidden).reduce((a, b) => S.buildings[b] < S.buildings[a] ? b : a);
   },
   /* Achète tout ce qui est sélectionné et abordable. Retourne true si un achat a eu lieu */
   autoBuyTick() {
@@ -350,7 +363,7 @@ const G = {
     }
     for (const id in S.auto) {
       if (id === 'lowest' || !S.auto[id] || !this.autoUnlocked(id)) continue;
-      // « trading » regroupe le capital et l'espérance du Trading Interstellaire
+      // « trading » regroupe le capital et l'espérance de l'Accélérateur de particules
       if (SHIPS[id]) {
         const n = [100, 10, 1].find(k => this.canBuildShips(id, k));
         if (n) { this.buildShips(id, n); bought = true; }
@@ -360,7 +373,7 @@ const G = {
         : id === 'pick' ? [['c', 'pickFerrite'], ['c', 'pickDeut']]
         : [[BUILDINGS[id] ? 'b' : TECHS[id] ? 't' : CLICK_TECHS[id] ? 'c' : null, id]];
       for (const [kind, k] of list) {
-        if (kind && this.check(kind, k).ok) { this.upgrade(kind, k, true); bought = true; }
+        if (kind && this.check(kind, k, true).ok) { this.upgrade(kind, k, true); bought = true; }
       }
     }
     return bought;
@@ -369,21 +382,23 @@ const G = {
   /* ---------- Jackpot : un tirage toutes les 10 s ---------- */
   JACKPOT_PERIOD: 10,
   jackT: 0,
-  jackpotIn() { return Math.max(0, this.JACKPOT_PERIOD - this.jackT); },
-  jackpotScale: { ferrite: 1, deuterium: 0.5, darkMatter: 0.2 },
+  jackpotPeriod() { return Math.max(2, this.JACKPOT_PERIOD - this.art('hourglass')); },   // 2 s minimum   // Sablier temporel
+  jackpotIn() { return Math.max(0, this.jackpotPeriod() - this.jackT); },
+  jackpotScale: { ferrite: 1, deuterium: 0.5, darkMatter: 2 },
   /* gain d'une opération : base fixe + (1 + 0,5 × niveau) secondes de production */
-  jackpotBase(L, r, rate) { return L > 0 ? 25 * this.jackpotScale[r] * L + rate * (1 + 0.5 * L) : 0; },
-  jackpotAvg(L = S.click.jackpot, r = 'ferrite') {
+  // matière noire produite par une collision réussie : 100 × niveau × 1,15^(niveau−1)
+  jackpotBase(L, r, rate) { return L > 0 ? (100 * L * Math.pow(1.15, L - 1) + rate * (1 + 0.5 * L)) * (1 + 0.05 * this.art('voidShard')) : 0; },
+  jackpotAvg(L = S.click.jackpot, r = 'darkMatter') {
     return this.jackpotBase(L, r, this.rates()[r]) * 1.1;
   },
   /* Probabilité de gagner : 40 % + 5 % par niveau de chance (95 % max) */
-  casinoChance(L = S.click.casinoLuck) { return Math.min(0.95, 0.4 + 0.05 * L); },
+  casinoChance(L = S.click.casinoLuck) { return Math.min(0.95, 0.05 + 0.05 * L); },   // 5 % au départ, +5 % par niveau
   jackpotRoll() {
     if (Math.random() >= this.casinoChance()) return { lost: true };
     const L = S.click.jackpot, rt = this.rates();
     const w = Math.random();
-    const r = w < 0.6 ? 'ferrite' : w < 0.9 ? 'deuterium' : 'darkMatter';
-    const big = Math.random() < 0.05;
+    const r = 'darkMatter';   // l'accélérateur ne produit que de la matière noire
+    const big = false;   // plus de jackpot ×10
     const amt = this.jackpotBase(L, r, rt[r]) * (0.2 + Math.random() * 1.8) * (big ? 10 : 1);
     const add = Math.max(0, Math.min(Math.round(amt), rt.caps[r] - S.res[r]));
     S.res[r] += add;
@@ -403,21 +418,22 @@ const G = {
   exchangeEffLevel(L = S.click.exchanger || 0) { return Math.max(1, L - EXCHANGE_PAIRS.length + 1); },
   exchangeQuote(from, to) {
     if (!this.exchangeUnlocked(from, to)) return { n: 0 };
-    const E = this.exchangeEffLevel();
-    // ratio fixe 3:1 (les niveaux n'augmentent que la quantité échangée)
-    const caps = this.rates().caps, r = this.EXCHANGE_RATIO, batch = this.xferBatch(E);
+    // ratio fixe 3:1 ; chaque niveau augmente la quantité maximale échangée
+    const W = this.shareWallet(), caps = this.moonIdx() >= 0 ? this.INF_CAPS : this.rates().caps;
+    const r = this.EXCHANGE_RATIO, batch = this.xferBatch(S.click.exchanger || 0);
     const steps = RES_KEYS.indexOf(to) - RES_KEYS.indexOf(from), k = Math.pow(r, Math.abs(steps));
     // vers plus précieux : on donne k « from » par unité reçue ; vers moins précieux : 1 « from » donne k « to »
     const n = steps > 0
-      ? Math.min(batch, Math.floor(S.res[from] / k), Math.floor(caps[to] - S.res[to]))
-      : Math.min(batch, Math.floor(S.res[from]), Math.floor((caps[to] - S.res[to]) / k));
+      ? Math.min(batch, Math.floor(W[from] / k), Math.floor(caps[to] - W[to]))
+      : Math.min(batch, Math.floor(W[from]), Math.floor((caps[to] - W[to]) / k));
     const give = steps > 0 ? n * k : n, get = steps > 0 ? n : n * k;
     return { n: Math.max(0, n), give, get };
   },
   exchange(from, to) {
     const q = this.exchangeQuote(from, to);
     if (q.n < 1) return { ok: false, msg: 'Échange impossible : matériaux ou stockage insuffisants.' };
-    S.res[from] -= q.give; S.res[to] += q.get;
+    const W = this.shareWallet();
+    W[from] -= q.give; W[to] += q.get;
     return { ok: true, ...q };
   },
   xferRatio(L) { return 1 + 2 * Math.pow(0.9, Math.max(0, L - 1)); },            // 3:1 au niv. 1, tend vers 1:1
@@ -475,7 +491,7 @@ const G = {
   },
 
   /* Vérifie si une amélioration est possible. kind : 'b' | 't' */
-  check(kind, id) {
+  check(kind, id, auto = false) {
     const isB = kind === 'b';
     const def = this.defOf(kind, id);
     const lvl = this.levels(kind)[id] + 1;
@@ -483,15 +499,15 @@ const G = {
     if (def.max && lvl > def.max) return { ok: false, code: 'max', label: 'Niveau max', cost };
     if (this.reqsMissing(def.req, def.reqClick).length) return { ok: false, code: 'locked', label: 'Verrouillé', cost };
     if (isB && this.usedFields() >= MAX_FIELDS) return { ok: false, code: 'fields', label: 'Planète pleine', cost, msg: 'Plus aucune case disponible.' };
-    if (!this.canAfford(cost, this.wallet(kind))) return { ok: false, code: 'money', label: 'Ressources insuffisantes', cost, msg: 'Ressources insuffisantes.' };
+    if (!this.canAfford(cost, this.wallet(kind, id, auto))) return { ok: false, code: 'money', label: 'Ressources insuffisantes', cost, msg: 'Ressources insuffisantes.' };
     return { ok: true, cost, lvl };
   },
 
   /* Amélioration instantanée */
   upgrade(kind, id, auto = false) {
-    const c = this.check(kind, id);
+    const c = this.check(kind, id, auto);
     if (!c.ok) return c;
-    const wallet = this.wallet(kind);
+    const wallet = this.wallet(kind, id, auto);
     for (const r in c.cost) wallet[r] -= c.cost[r];
     this.levels(kind)[id] = c.lvl;
     if (kind === 'c' && id === 'terraform') this.syncMoons();
@@ -547,7 +563,7 @@ const G = {
   hydrate(data) {
     const d = newState();
     const s = Object.assign(d, data);
-    for (const k of ['res', 'buildings', 'techs', 'click', 'auto', 'planet', 'stats', 'ui', 'fleet', 'raid', 'exped', 'ach', 'map']) s[k] = Object.assign(newState()[k], data[k]);
+    for (const k of ['res', 'buildings', 'techs', 'click', 'auto', 'planet', 'stats', 'ui', 'fleet', 'raid', 'exped', 'ach', 'map', 'artifacts']) s[k] = Object.assign(newState()[k], data[k]);
     // migration : l'ancienne « Pioche Renforcée » devient la Pioche à Ferrite
     if (s.click.pickaxe) { s.click.pickFerrite = Math.max(s.click.pickFerrite, s.click.pickaxe); }
     // les drones de forage deviennent le Robot Mineur

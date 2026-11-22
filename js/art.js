@@ -19,8 +19,7 @@ const RES_LOGOS = (() => {
     '<path d="M16 2C22 10 26.5 15.5 26.5 21A10.5 10.5 0 0 1 5.5 21C5.5 15.5 10 10 16 2z" fill="#1f9e94" stroke="#063a36" stroke-width="1.2" stroke-linejoin="round"/>' +
     '<path d="M16 2C10 10 5.5 15.5 5.5 21A10.5 10.5 0 0 0 16 31.5z" fill="#4fd1c5"/>' +
     '<path d="M16 2C22 10 26.5 15.5 26.5 21A10.5 10.5 0 0 1 5.5 21C5.5 15.5 10 10 16 2z" fill="none" stroke="#063a36" stroke-width="1.2" stroke-linejoin="round"/>' +
-    '<path d="M9.5 17.5c.6-2.6 2-4.8 3.6-6.8" stroke="#e6fffb" stroke-width="1.6" fill="none" stroke-linecap="round"/>' +
-    '<text x="16.5" y="26" font-family="Orbitron,Arial,sans-serif" font-size="10" font-weight="900" text-anchor="middle" fill="#03302c">D</text>';
+    '<path d="M9.5 17.5c.6-2.6 2-4.8 3.6-6.8" stroke="#e6fffb" stroke-width="1.6" fill="none" stroke-linecap="round"/>';
 
   // Matière noire : sphère sombre et anneau d'accrétion
   const darkMatter =
