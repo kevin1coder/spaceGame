@@ -145,6 +145,10 @@ const G = {
     const gear = (kind === 'b' || kind === 'm') && MINES[id] ? Math.pow(0.98, this.art('gear')) : 1;   // Rouage ancien
     const out = {};
     for (const k in def.cost) out[k] = Math.floor(def.cost[k] * Math.pow(def.factor, level - 1) * disc * infl * gear);
+    // entrepôts : le prix ne dépasse jamais 90 % de la capacité actuelle de chaque matière
+    // (sinon l'amélioration deviendrait impossible à payer)
+    if (kind === 'b' && def.cat === 'storage')
+      for (const k in out) out[k] = Math.min(out[k], Math.floor(0.9 * this.storageCap(S.buildings[STORES[k]])));
     return out;
   },
 
@@ -180,6 +184,14 @@ const G = {
     const c = this.costOf('s', id, 1), out = {};
     for (const k in c) out[k] = c[k] * n;
     return out;
+  },
+  /* nombre maximal de vaisseaux constructibles avec le stock actuel */
+  maxShips(id) {
+    if (this.reqsMissing(SHIPS[id].req).length) return 0;
+    const c = this.costOf('s', id, 1);
+    let n = Infinity;
+    for (const k in c) if (c[k] > 0) n = Math.min(n, Math.floor(S.res[k] / c[k]));
+    return isFinite(n) ? Math.max(0, n) : 0;
   },
   canBuildShips(id, n) { return !this.reqsMissing(SHIPS[id].req).length && this.canAfford(this.shipCost(id, n)); },
   buildShips(id, n) {
@@ -402,8 +414,10 @@ const G = {
       if (id === 'lowest' || !S.auto[id] || !this.autoUnlocked(id)) continue;
       // « trading » regroupe le capital et l'espérance de l'Accélérateur de particules
       if (SHIPS[id]) {
-        const n = [100, 10, 1].find(k => this.canBuildShips(id, k));
-        if (n) { this.buildShips(id, n); bought = true; }
+        // « MAX » : le plus grand nombre possible ; « AUTO » : le plus grand lot entre ×100, ×10 et ×1
+        let n = S.auto[id] === 'max' ? this.maxShips(id) : ([100, 10, 1].find(k => this.canBuildShips(id, k)) || 0);
+        if (n > 0 && !this.canBuildShips(id, n)) n--;   // marge d'arrondi
+        if (n > 0 && this.canBuildShips(id, n)) { this.buildShips(id, n); bought = true; }
         continue;
       }
       const list = id === 'trading' ? [['c', 'jackpot'], ['c', 'casinoLuck']]

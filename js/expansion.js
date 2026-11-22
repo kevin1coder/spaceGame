@@ -146,25 +146,35 @@ Object.assign(G, {
   /* Score d'expédition = nombre d'explorers × aléatoire [0, 1).
      Les points sont répartis entre plusieurs artefacts : à chaque tirage, on prend un artefact
      au hasard parmi ceux dont le seuil tient dans les points restants (pas forcément le plus cher),
-     jusqu'à ne plus rien pouvoir payer. La somme des seuils obtenus reste ≤ score. */
+     jusqu'à ne plus rien pouvoir payer. La somme des seuils obtenus reste ≤ score.
+     Retourne { id: nombre d'exemplaires }. */
   rollArtifact(n) {
     const score = n * Math.random();
     this.lastScore = score;
     let rest = score;
-    const found = [];
-    for (let guard = 0; guard < 1000; guard++) {
-      const pool = Object.keys(ARTIFACTS).filter(id => ARTIFACTS[id].pts <= rest);
-      if (!pool.length) break;
-      const id = pool[Math.floor(Math.random() * pool.length)];   // au hasard parmi les artefacts abordables
-      S.artifacts[id] = this.art(id) + 1;
-      rest -= ARTIFACTS[id].pts;
-      found.push(id);
+    const counts = {}, ids = Object.keys(ARTIFACTS), add = (id, k) => { counts[id] = (counts[id] || 0) + k; rest -= ARTIFACTS[id].pts * k; };
+    // pas de limite au nombre d'artefacts. Pour les très gros scores, la partie où tous les artefacts
+    // sont abordables est répartie d'un coup (même proportion moyenne qu'un tirage un par un)
+    const maxPts = Math.max(...ids.map(id => ARTIFACTS[id].pts)), meanPts = ids.reduce((x, id) => x + ARTIFACTS[id].pts, 0) / ids.length;
+    if (rest > maxPts * 200) {
+      const per = Math.floor((rest - maxPts * 100) / meanPts / ids.length);   // tirages par artefact
+      if (per > 0) for (const id of ids) add(id, per);
     }
-    if (found.length) this.rev++;
-    return found;
+    // le reste : un tirage à la fois, au hasard parmi les artefacts abordables
+    for (;;) {
+      const pool = ids.filter(id => ARTIFACTS[id].pts <= rest);
+      if (!pool.length) break;
+      add(pool[Math.floor(Math.random() * pool.length)], 1);
+    }
+    for (const id in counts) S.artifacts[id] = this.art(id) + counts[id];
+    if (Object.keys(counts).length) this.rev++;
+    return counts;
   },
-  /* « ☄️ ×2 · 🧭 » : regroupe une liste d'artefacts par type */
-  artifactCounts(list) { const c = {}; for (const id of list || []) c[id] = (c[id] || 0) + 1; return c; },
+  /* « ☄️ ×2 · 🧭 » : regroupe par type (accepte une liste d'identifiants ou un objet { id: nombre }) */
+  artifactCounts(list) {
+    if (list && !Array.isArray(list)) return { ...list };
+    const c = {}; for (const id of list || []) c[id] = (c[id] || 0) + 1; return c;
+  },
 
   /* --- carte galactique --- */
   map() { if (!this._map || this._map.seed !== S.map.seed) this._map = genMap(S.map.seed); return this._map; },
@@ -596,7 +606,7 @@ Object.assign(UI, {
   expedBanner(r) {
     const counts = Object.entries(G.artifactCounts(r.found)).sort((a, b) => ARTIFACTS[b[0]].pts - ARTIFACTS[a[0]].pts);
     const nLost = Object.values(r.lost).reduce((a, b) => a + b, 0);
-    const list = counts.map(([a, k]) => `<span style="color:${ARTIFACT_RARITY[ARTIFACTS[a].rarity].color}">${ARTIFACTS[a].icon}×${k}</span>`).join(' ');   // logo + nombre (sans le nom)
+    const list = counts.map(([a, k]) => `<span style="color:${ARTIFACT_RARITY[ARTIFACTS[a].rarity].color}">${ARTIFACTS[a].icon}×${fmtCount(k)}</span>`).join(' ');   // logo + nombre (sans le nom)
     const html = `<em class="jp raidt">🚀 Retour d'expédition</em>`
       + (list || '<span class="muted">Aucun artefact</span>')
       + ` <span class="muted">· ${Math.floor(r.score || 0)} pts</span>`

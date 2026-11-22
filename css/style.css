@@ -772,3 +772,6 @@ textarea {
 
 /* Compteur de clics de minage, sous le chrono */
 .game-clock.click-count { top: 38px; }
+
+/* AUTO des vaisseaux en mode MAX */
+.auto-tg.on.max { background: #ffb347; border-color: #ffb347; box-shadow: 0 0 8px rgba(255, 179, 71, .6); }

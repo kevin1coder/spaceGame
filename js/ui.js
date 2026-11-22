@@ -37,6 +37,8 @@ function fmtCost(n) {
   const t = s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
   return t.replace('.', ',') + units[i][0];
 }
+/* Nombre d'exemplaires : en entier jusqu'à 6 chiffres, puis en unités (1,23M · 45,6Md …) */
+function fmtCount(n) { return n < 1e6 ? String(Math.floor(n)) : fmtCost(n); }
 function fmtTime(sec) {
   if (!isFinite(sec)) return '∞';
   sec = Math.max(0, Math.ceil(sec));
@@ -146,7 +148,8 @@ const UI = {
       case 'mapdeploy': S.ui.mapSel = +id; r = G.mapDeploy(+id); G.rev++; break;   // clic sur une planète : +1 destroyer
       case 'maprecall': r = G.mapRecall(+id); G.rev++; break;
       case 'auto':
-        S.auto[id] = !S.auto[id];
+        // vaisseaux : 3 états (désactivé → activé ×1/×10/×100 → max) ; autres tuiles : on / off
+        S.auto[id] = SHIPS[id] ? (!S.auto[id] ? true : S.auto[id] === 'max' ? false : 'max') : !S.auto[id];
         G.rev++;
         break;
       case 'swap': {
@@ -389,8 +392,9 @@ const UI = {
   /* Bouton AUTO (achat automatique) sur les tuiles de bâtiments débloqués */
   autoToggleHTML(id) {
     if (!G.autoUnlocked(id)) return '';
-    const on = !!S.auto[id];
-    return `<button class="auto-tg ${on ? 'on' : ''}" data-action="auto" data-id="${id}" title="Achat automatique : ${on ? 'activé' : 'désactivé'}">AUTO</button>`;
+    const on = !!S.auto[id], max = S.auto[id] === 'max';
+    const tip = max ? 'construit le plus grand nombre possible' : on ? (SHIPS[id] ? 'activé (×1, ×10 ou ×100)' : 'activé') : 'désactivé';
+    return `<button class="auto-tg ${on ? 'on' : ''} ${max ? 'max' : ''}" data-action="auto" data-id="${id}" title="Achat automatique : ${tip}">${max ? 'MAX' : 'AUTO'}</button>`;
   },
 
   /* Structure commune de toutes les tuiles */
@@ -741,7 +745,7 @@ const UI = {
     const owned = Object.keys(ARTIFACTS).filter(id => G.art(id) > 0).sort((a, b) => ARTIFACTS[a].pts - ARTIFACTS[b].pts);
     const items = owned.map(id => {
       const a = ARTIFACTS[id], n = G.art(id), R = ARTIFACT_RARITY[a.rarity];
-      return `<span class="arti r-${a.rarity}" style="--c:${R.color}" title="${esc([a.name, `Rareté : ${R.name}`, `Effet : ${a.effect(n)}`].join('\n'))}">${a.icon}<b>×${n}</b></span>`;
+      return `<span class="arti r-${a.rarity}" style="--c:${R.color}" title="${esc([a.name, `Rareté : ${R.name}`, `Effet : ${a.effect(n)}`].join('\n'))}">${a.icon}<b>×${fmtCount(n)}</b></span>`;
     }).join('');
     return `<div class="fleet-head arti-title"><span>Artefacts aliens</span></div><div class="arti-row">${items || '<span class="muted arti-none">Aucun : envoyez des explorers en expédition</span>'}</div>`;
   },
