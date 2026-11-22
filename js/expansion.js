@@ -28,11 +28,11 @@ const ACH_TIERS = [
   { name: 'Plasma',  color: '#c58bff' },
 ];
 const ACHIEVEMENTS = [
-  { id: 'clicks',   name: 'Mineur assidu',     icon: 'pick',        unit: 'clics',                steps: [10, 100, 1e3, 1e4, 1e5],   metric: () => S.stats.clicks },
+  { id: 'clicks',   name: 'Mineur assidu',     icon: 'pick',        unit: 'clics',                steps: [10, 100, 1e3, 5e3, 1e4],    metric: () => S.stats.clicks },
   { id: 'ferrite',  name: 'Magnat des matières', icon: 'drill',     unit: 'matières en stock (toutes)', steps: [1e4, 1e5, 1e6, 1e7, 1e8], metric: () => RES_KEYS.reduce((a, r) => a + S.res[r], 0) },
   { id: 'mines',    name: 'Industriel',        icon: 'factory',     unit: 'niveaux de mines',     steps: [10, 30, 50, 75, 100],      metric: () => G.mineSum() },
   { id: 'fleet',    name: 'Amiral',            icon: 'shipCruiser', unit: 'vaisseaux',            steps: [1, 10, 50, 200, 1000],     metric: () => G.fleetCount() + G.expedShips() + G.mapDeployed() },
-  { id: 'raids',    name: 'Défenseur',         icon: 'laser',       unit: 'attaques repoussées',  steps: [1, 10, 25, 50, 100],       metric: () => S.stats.raidsWon },
+  { id: 'raids',    name: 'Défenseur',         icon: 'laser',       unit: 'attaques repoussées',  steps: [1, 5, 15, 30, 50],         metric: () => S.stats.raidsWon },
   { id: 'moons',    name: 'Terraformeur',      icon: 'moon',        unit: 'lunes',                steps: [1, 2, 3], tiers: [0, 2, 4],                  metric: () => S.moons.length },
   { id: 'expeds',   name: 'Explorateur',       icon: 'warp',        unit: 'expéditions',          steps: [1, 5, 15, 40, 100],        metric: () => S.stats.expeds },
   { id: 'map',      name: 'Cartographe',       icon: 'gate',        unit: 'systèmes conquis',    steps: [2, 4, 6, 9, 12],           metric: () => G.mapExploredCount() },
@@ -51,11 +51,11 @@ const STAR_NAMES = ['Achernar', 'Bellatrix', 'Capella', 'Diphda', 'Electra', 'Fo
   'Mirach', 'Naos', 'Phact', 'Rasalas', 'Sadr', 'Tureis', 'Wezen', 'Zosma', 'Alnair', 'Menkar'];
 const SYS_TYPES = {
   home:       { name: 'Système natal',          color: '#4fc3ff', bonus: 'Votre colonie' },
-  ferrite:    { name: 'Gisement de ferrite',    color: '#d9a066', bonus: '+5 % de ferrite',          w: 20 },
-  deuterium:  { name: 'Nébuleuse de deutérium', color: '#4fd1c5', bonus: '+5 % de deutérium',        w: 20 },
-  darkMatter: { name: 'Faille de matière noire', color: '#a77bff', bonus: '+5 % de matière noire',   w: 15 },
+  ferrite:    { name: 'Gisement de ferrite',    color: '#d9a066', bonus: '+500 % de ferrite',          w: 20 },
+  deuterium:  { name: 'Nébuleuse de deutérium', color: '#4fd1c5', bonus: '+500 % de deutérium',        w: 20 },
+  darkMatter: { name: 'Faille de matière noire', color: '#a77bff', bonus: '+500 % de matière noire',   w: 15 },
   cache:      { name: 'Épave abandonnée',       color: '#ffd166', bonus: 'Butin unique à la découverte', w: 20 },
-  relic:      { name: 'Ruines anciennes',       color: '#ff8c5a', bonus: '+3 % de toute production', w: 10 },
+  relic:      { name: 'Ruines anciennes',       color: '#ff8c5a', bonus: '+300 % de toute production', w: 10 },
   empty:      { name: 'Système désert',         color: '#7b8ca6', bonus: 'Rien à signaler',          w: 15 },
 };
 
@@ -416,8 +416,8 @@ Object.assign(G, {
     this.rev++;
   },
   /* bonus permanents des systèmes explorés */
-  mapResBonus(res) { return this.map().nodes.filter((n, i) => S.map.explored[i] && n.type === res).length * 0.05; },
-  mapAllBonus() { return this.map().nodes.filter((n, i) => S.map.explored[i] && n.type === 'relic').length * 0.03; },
+  mapResBonus(res) { return this.map().nodes.filter((n, i) => S.map.explored[i] && n.type === res).length * 5; },   // +500 % par système conquis
+  mapAllBonus() { return this.map().nodes.filter((n, i) => S.map.explored[i] && n.type === 'relic').length * 3; },   // +300 % de toute production par ruine
 
   /* --- succès --- */
   achTier(a) { const v = a.metric(); return a.steps.filter(x => v >= x).length; },

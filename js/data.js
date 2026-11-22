@@ -348,7 +348,7 @@ const AUTO_UNLOCKS = [
    (les pirates sont un événement parmi les autres). */
 const EVENTS = {
   pirates: {
-    name: 'Pirates', kind: 'raid', share: 0.4, effect: 'Combat', color: '#ffb347',
+    name: 'Pirates', kind: 'raid', share: 0.5, effect: 'Combat', color: '#ffb347',
     desc: 'Une vague pirate attaque : votre flotte la repousse si sa puissance de feu est suffisante, sinon les pirates pillent vos stocks.',
   },
   boss: {

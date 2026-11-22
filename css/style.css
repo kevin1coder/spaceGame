@@ -42,7 +42,8 @@ b { color: #fff; font-weight: 700; }
   position: relative; z-index: 5;
 }
 .logo { font: 900 22px var(--font-title); letter-spacing: 3px; color: #fff; white-space: nowrap; }
-.logo span { color: var(--title); margin-left: 6px; }
+.logo span { color: var(--title); margin-left: 0; }
+.logo span.sp { color: var(--title); }   /* « SPACE » de la même couleur que « .COM » */
 
 .resbar { display: flex; gap: 10px; flex: 1; justify-content: flex-end; overflow-x: auto; }
 .res {

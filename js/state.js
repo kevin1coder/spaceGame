@@ -216,7 +216,7 @@ const G = {
       w[id] -= cut;
       if (w.calm != null) w.calm += cut;
     }
-    // événements à part fixe (pirates : 40 %)
+    // événements à part fixe (pirates : 50 %)
     const rest = Object.values(w).reduce((a, b) => a + b, 0);
     for (const id in EVENTS) {
       const d = EVENTS[id];
