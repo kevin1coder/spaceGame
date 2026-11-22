@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova Colonies</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo">NOVA<span>COLONIES</span></div>
+    <div class="resbar" id="resbar"></div>
+    <button class="icon-btn big" data-action="options" title="Options">⚙</button>
+  </header>
+
+  <div class="layout">
+    <aside class="planet-panel">
+      <div class="planet-head">
+        <h2 id="planetName">—</h2>
+        <button class="icon-btn" data-action="rename" title="Renommer la planète">✎</button>
+      </div>
+      <div class="planet-sub" id="planetSub"></div>
+      <div class="body-tabs" id="bodyTabs"></div>
+      <div class="planet-wrap" id="planetWrap">
+        <canvas id="planetCanvas"></canvas>
+        <div class="floaters" id="floaters"></div>
+      </div>
+      <div class="fleet" id="fleet"></div>
+      <div class="threats" id="threats"></div>
+      <div class="side-block" id="mapPanel"></div>
+      <div class="side-block" id="achPanel"></div>
+    </aside>
+
+    <main class="content" id="content"></main>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <div class="modal-back" id="modal" hidden>
+    <div class="modal">
+      <div id="modalBody"></div>
+      <button class="btn" id="modalClose">Fermer</button>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/art.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/planet.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/expansion.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
