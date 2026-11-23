@@ -42,7 +42,18 @@ function newMoon() {
   RES_KEYS.forEach(r => res[r] = 0);
   Object.keys(MINES).forEach(k => mines[k] = 0);
   Object.keys(MOON_TECHS).forEach(k => tech[k] = 0);
-  return { res, mines, tech, seed: (Math.random() * 2 ** 31) | 0, name: moonName(), cargoOn: true };
+  const seed = (Math.random() * 2 ** 31) | 0, mat = moonMat(seed);
+  res[mat] = 0;
+  return { res, mines, tech, mat, seed, name: moonName(), cargoOn: true, mined: 0 };
+}
+/* matière d'une lune : déterminée par son type de planète */
+function moonMat(seed) { return MAT_BY_TYPE[planetTraits(seed, 'moon').type] || 'quartz'; }
+/* matériau lunaire tiré au sort, différent de ceux des autres lunes */
+function lunarMat(except = []) {
+  const taken = ((typeof S !== 'undefined' && S && S.moons) ? S.moons.map(m => m.mat) : []).concat(except);
+  const free = Object.keys(LUNAR_MATS).filter(k => !taken.includes(k));
+  const pool = free.length ? free : Object.keys(LUNAR_MATS);
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /* Nom aléatoire de planète, du type « Gliese-581 » */
@@ -92,14 +103,16 @@ const G = {
   moonCount() { return Math.min(this.MAX_MOONS, S.click.terraform); },
   /* crée les lunes manquantes (une par niveau de Terraformage) */
   syncMoons() { while (S.moons.length < this.moonCount()) S.moons.push(newMoon()); },
-  moonIdx() { return typeof S.view === 'number' && S.moons[S.view] ? S.view : -1; },
+  /* les lunes disparaissent une fois la carte galactique créée (elles ont servi au lancement) */
+  moonsGone() { return S.click.gate > 0; },
+  moonIdx() { return !this.moonsGone() && typeof S.view === 'number' && S.moons[S.view] ? S.view : -1; },
   curMoon() { return S.moons[Math.max(0, this.moonIdx())]; },
   INF_CAPS: { ferrite: Infinity, deuterium: Infinity, darkMatter: Infinity },
   /* Compteur utilisé pour payer : chaque lune a le sien */
   // le Commerce (niveau commun) se paie et s'utilise avec le compteur du corps affiché
   wallet(kind, id, auto) {
+    if (kind === 'x' && MOON_TECHS[id] && MOON_TECHS[id].planetPaid) return S.res;
     if (kind === 'm' || kind === 'x') return this.curMoon().res;
-    if (kind === 'c' && id === 'exchanger' && !auto && this.moonIdx() >= 0) return this.curMoon().res;
     return S.res;
   },
   shareWallet() { return this.moonIdx() >= 0 ? this.curMoon().res : S.res; },
@@ -108,30 +121,75 @@ const G = {
     const out = { caps: this.INF_CAPS };
     for (const r of RES_KEYS) out[r] = 0;
     if (!moon) return out;
-    for (const id in MINES) {
-      const r = MINES[id].res;
-      out[r] += this.mineOutput(id, moon.mines[id]) * this.bonus(r);
-    }
+    out[moon.mat] = 0;   // plus de production automatique : seulement les clics
     return out;
   },
+  /* robot d'extraction lunaire : unités par seconde */
+  /* l'extraction ronge la lune : son diamètre diminue (jusqu'à moitié au niveau 25) */
+  /* Masse d'une lune : juste de quoi payer le Tremplin jusqu'au niveau 10 (via le Commerce lunaire),
+     les 20 niveaux d'Extraction, sans marge. */
+  moonMass(mat) {
+    const sum = (def, n) => { let s = 0; const c = Object.values(def.cost)[0]; for (let L = 1; L <= n; L++) s += c * Math.pow(def.factor, L - 1); return s; };
+    const v = LUNAR_MATS[mat].value / RES_VALUE.darkMatter;   // matière noire obtenue par unité
+    const need = sum(MOON_TECHS.jump, MOON_TECHS.jump.max) / v + sum(MOON_TECHS.extract, MOON_TECHS.extract.max);
+    return Math.ceil(need);   // sans marge : tout juste de quoi finir
+  },
+  /* Matière lunaire qu'il faut encore extraire pour finir la lune (Extraction 20 et Tremplin 10),
+     compte tenu des stocks actuels : la lune n'est jamais vide tant que ce n'est pas fini. */
+  moonDeficit(moon) {
+    const left = (id, from) => { const d = MOON_TECHS[id], c = Object.values(d.cost)[0]; let s = 0; for (let L = from + 1; L <= d.max; L++) s += c * Math.pow(d.factor, L - 1); return s; };
+    const v = LUNAR_MATS[moon.mat].value / RES_VALUE.darkMatter;
+    const dm = Math.max(0, left('jump', moon.tech.jump || 0) - (moon.res.darkMatter || 0));
+    return Math.max(0, Math.ceil(left('extract', moon.tech.extract || 0) + dm / v - (moon.res[moon.mat] || 0)));
+  },
+  // matière restante : la masse non extraite, mais jamais moins que ce qu'il faut pour finir (pas de blocage)
+  moonLeft(moon) { return Math.max(0, this.moonMass(moon.mat) - (moon.mined || 0), this.moonDeficit(moon)); },
+  moonLeftFrac(moon) { return moon ? Math.min(1, this.moonLeft(moon) / this.moonMass(moon.mat)) : 1; },
+  /* diamètre : suit la masse restante ; la lune disparaît une fois épuisée */
+  moonScale(moon) { const f = this.moonLeftFrac(moon); return f > 0 ? 0.25 + 0.75 * f : 0; },
+  /* matériau extrait par clic selon le niveau d'Extraction */
+  clickYield(L) { return Math.round(2 * Math.pow(1.85, L || 0)); },
+  extractRate(L) { return L > 0 ? 2 * Math.pow(1.6, L - 1) : 0; },
+  /* Commerce lunaire : n unités du matériau de la lune → matériau r de la planète (selon les valeurs) */
+  /* dir : 'darkMatter' (matériau lunaire → matière noire de la lune) ou 'lunar' (matière noire → matériau lunaire) */
+  moonTradeQuote(dir, moon = this.curMoon()) {
+    // commerce lunaire gratuit et sans niveau : tout le stock est converti d'un coup
+    const v = LUNAR_MATS[moon.mat].value / RES_VALUE.darkMatter, b = Infinity;
+    if (dir === 'lunar') {
+      const n = Math.floor(Math.min(b * v, moon.res.darkMatter || 0));
+      return { n, get: Math.floor(n / v), v, from: 'darkMatter', to: moon.mat };
+    }
+    const n = Math.floor(Math.min(b, moon.res[moon.mat] || 0));
+    return { n, get: Math.floor(n * v), v, from: moon.mat, to: 'darkMatter' };
+  },
+  moonTrade(dir) {
+    const moon = this.curMoon(), q = this.moonTradeQuote(dir, moon);
+    if (q.n < 1 || q.get < 1) return { ok: false, msg: 'Échange impossible : stock insuffisant.' };
+    moon.res[q.from] -= q.n; moon.res[q.to] = (moon.res[q.to] || 0) + q.get;
+    return { ok: true, ...q };
+  },
+  /* Espace galactique : les 3 lunes doivent avoir leur ascenseur au niveau voulu */
+  /* structure du tremplin selon la lune : chantier, réservoir, rail d'accélération (les trois étages d'un lanceur) */
+  gateStyle(i) { return ['yard', 'tank', 'rail'][i % 3]; },
+  moonsJumpOk(L) { return S.moons.length >= this.MAX_MOONS && S.moons.every(m => (m.tech.jump || 0) >= L); },
+  moonsCargoOk(L) { return S.moons.length >= this.MAX_MOONS && S.moons.every(m => (m.tech.cargo || 0) >= L); },
   /* Production qui alimente un compteur, et sa capacité */
   walletRates(kind) { return kind === 'm' || kind === 'x' ? this.moonRates() : this.rates(); },
 
   /* Ascenseur Gravitationnel : toutes les 30 s, envoie le stock de la lune vers la planète.
      Le niveau augmente la quantité transportée (par matériau et par envoi). */
   CARGO_PERIOD: 30,
+  /* matière noire montée par seconde vers la lune selon le niveau de l'ascenseur */
+  cargoRate(L) { return L > 0 ? 5 * Math.pow(2, L - 1) : 0; },
   cargoCap(L) { return L > 0 ? 1000 * Math.pow(2, L - 1) : 0; },
   cargoT: [],
   cargoIn(i) { return Math.max(0, this.CARGO_PERIOD - (this.cargoT[i] || 0)); },
   MANUAL_CAP: 500,
   cargoShip(i, manual = false) {
-    const moon = S.moons[i], L = moon.tech.cargo;
-    const cap = manual ? Math.max(this.MANUAL_CAP, this.cargoCap(L)) : this.cargoCap(L);
-    const caps = this.rates().caps, got = {};
-    for (const r of RES_KEYS) {
-      const n = Math.max(0, Math.min(moon.res[r], cap, caps[r] - S.res[r]));
-      moon.res[r] -= n; S.res[r] += n; got[r] = n;
-    }
+    const moon = S.moons[i], caps = this.rates().caps, got = {};
+    if (!manual && !(moon.tech.cargo > 0)) return got;
+    const n = Math.max(0, Math.min(moon.res.darkMatter || 0, caps.darkMatter - S.res.darkMatter));
+    moon.res.darkMatter -= n; S.res.darkMatter += n; got.darkMatter = n;
     return got;
   },
 
@@ -144,7 +202,7 @@ const G = {
     const infl = S.raid && this.fxActive('inflation') ? 2 : 1;   // hyperinflation
     const gear = (kind === 'b' || kind === 'm') && MINES[id] ? Math.pow(0.98, this.art('gear')) : 1;   // Rouage ancien
     const out = {};
-    for (const k in def.cost) out[k] = Math.floor(def.cost[k] * Math.pow(def.factor, level - 1) * disc * infl * gear);
+    for (const k in def.cost) out[k === 'lunar' ? this.curMoon().mat : k] = Math.floor(def.cost[k] * Math.pow(def.factor, level - 1) * disc * infl * gear);
     // entrepôts : le prix ne dépasse jamais 90 % de la capacité actuelle de chaque matière
     // (sinon l'amélioration deviendrait impossible à payer)
     if (kind === 'b' && def.cat === 'storage')
@@ -160,7 +218,7 @@ const G = {
   bonus(res) {
     const t = S.techs;
     const all = 0.03 * ((S.raid && S.raid.trophies) || 0) + 0.01 * this.achCount() + this.mapAllBonus() + 0.02 * t.physics + 0.03 * t.ions + 0.05 * t.hyperspace + 0.05 * S.click.terraform + 0.01 * this.art('compass');
-    const m = S.raid && this.fxActive('ice') ? 0.1 : 1;   // ère glaciaire
+    const m = S.raid && this.fxActive('ice') ? 0.25 : 1;   // ère glaciaire
     const map = this.mapResBonus(res);
     if (res === 'ferrite') return (1 + 0.04 * t.deepDrilling + 0.02 * this.art('meteor') + all + map) * m;
     if (res === 'deuterium') return (1 + 0.04 * t.deutRefining + 0.02 * this.art('frost') + all + map) * m;
@@ -257,6 +315,7 @@ const G = {
     if (!S.raid.plan[step]) {
       const ev = this.pickFor(step);
       if (ev.id === 'tax') ev.rate = this.taxRate();   // taux connu dès l'annonce
+      if (ev.id === 'rebellion') ev.rate = this.rebelRate();
       S.raid.plan[step] = ev;
       this.freezePower(step);
     }
@@ -271,6 +330,8 @@ const G = {
     for (let k = S.raid.step; k < step; k++) if (S.raid.plan[k] && S.raid.plan[k].id === 'pirates') w++;
     ev.w = w;
     ev.E = ev.id === 'boss' ? this.bossPower(w) : this.wavePower(w);
+    // une vague pirate n'est jamais plus faible que la précédente annoncée
+    if (ev.id === 'pirates') { ev.E = Math.max(ev.E, S.raid.maxE || 0); S.raid.maxE = ev.E; }
   },
   fxActive(name) { return (S.raid.fx[name] || 0) > Date.now(); },
   fxLeft(name) { return Math.max(0, ((S.raid.fx[name] || 0) - Date.now()) / 1000); },
@@ -293,9 +354,12 @@ const G = {
     p.id = e.id; p.via = 'signal';
     this.freezePower(S.raid.step);
     if (e.id === 'tax') p.rate = this.taxRate();
+    if (e.id === 'rebellion') p.rate = this.rebelRate();
     this.rev++;
     return true;
   },
+  /* rébellion : 5 à 50 % des vaisseaux, par pas de 5 % */
+  rebelRate() { return 0.05 * (1 + Math.floor(Math.random() * 10)); },
   taxRate() { return (3 + Math.floor(Math.random() * 8)) / 100; },   // 3 à 10 %
   /* skipStep : le créneau a déjà été consommé (impôt appliqué en différé) */
   runEvent(id, via = null, opts = {}, skipStep = false) {
@@ -312,7 +376,8 @@ const G = {
   waveBase(w) { return Math.round(20 * Math.pow(1.15, w - 1) + 10 * Math.pow(w - 1, 1.5)); },
   waveRoll(w) { const x = Math.sin(w * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); },   // [0, 1) fixe par vague
   wavePower(w) { return Math.round(Math.max(this.waveBase(w), this.fleetPower() * (0.5 + 0.5 * this.waveRoll(w)))); },
-  STEAL_MAX: 0.10,   // défaite sans aucune défense : 10 % des ressources pillées (20 % pour un chef pirate)
+  STEAL_MAX: 0.25,   // défaite contre les pirates sans aucune défense : 25 % des ressources pillées (chef pirate compris)
+  MAP_STEAL: 0.10,   // raid perdu d'un clan sur le système natal : 10 % au maximum
   /* Combat : la flotte gagne si sa puissance ≥ celle des pirates.
      Les pirates infligent des dégâts qui détruisent des vaisseaux (bouclier + coque). */
   BOSS_MULT: 5,
@@ -358,7 +423,7 @@ const G = {
       S.stats.raidsWon++;
     } else {
       // au prorata de l'écart de puissance : avec la moitié de la puissance des pirates, on perd 5 %
-      const ratio = this.STEAL_MAX * (boss ? 2 : 1) * (1 - Math.min(1, P / E)) * Math.max(0, 1 - 0.1 * this.art('seal'));
+      const ratio = this.STEAL_MAX * (1 - Math.min(1, P / E)) * Math.max(0, 1 - 0.1 * this.art('seal'));
       for (const r of RES_KEYS) { stolen[r] = S.res[r] * ratio; S.res[r] -= stolen[r]; }
     }
     const tier = this.waveTier(w);
@@ -416,7 +481,8 @@ const G = {
       if (SHIPS[id]) {
         // « MAX » : le plus grand nombre possible ; « AUTO » : le plus grand lot entre ×100, ×10 et ×1
         let n = S.auto[id] === 'max' ? this.maxShips(id) : ([100, 10, 1].find(k => this.canBuildShips(id, k)) || 0);
-        if (n > 0 && !this.canBuildShips(id, n)) n--;   // marge d'arrondi
+        // marge d'arrondi : pour les très grands nombres, « n − 1 » ne change rien, on réduit en proportion
+        for (let g = 0; g < 20 && n > 0 && !this.canBuildShips(id, n); g++) n = n > 1e6 ? Math.floor(n * (1 - 1e-6)) : n - 1;
         if (n > 0 && this.canBuildShips(id, n)) { this.buildShips(id, n); bought = true; }
         continue;
       }
@@ -457,7 +523,7 @@ const G = {
   },
 
   /* ---------- Transferts (échange 3:1 dans les deux sens) ---------- */
-  xferBatch(L) { return L > 0 ? Math.round(10 * Math.pow(1.8, L - 1)) : 0; },   // unités de la ressource rare par échange
+  xferBatch(L) { return L > 0 ? Math.round(20 * Math.pow(2.1, L - 1)) : 0; },   // unités de la ressource rare par échange
   /* Commerce : n unités du matériau le plus précieux par échange ; ratio r par cran
      (ferrite → deutérium → matière noire), r² entre ferrite et matière noire */
   EXCHANGE_RATIO: 3,   // 3 ferrite = 1 deutérium, 3 deutérium = 1 matière noire
@@ -539,6 +605,7 @@ const G = {
     for (const id in reqClick || {})
       if (S.click[id] < reqClick[id]) miss.push(`${CLICK_TECHS[id].name} ${reqClick[id]}`);
     if (!req) return miss;
+    if (req.moonsJump && !this.moonsJumpOk(req.moonsJump)) miss.push(`3 lunes avec Tremplin niv. ${req.moonsJump}`);
     for (const id in req.buildings || {})
       if (S.buildings[id] < req.buildings[id]) miss.push(`${BUILDINGS[id].name} ${req.buildings[id]}`);
     for (const id in req.techs || {})
@@ -546,7 +613,7 @@ const G = {
     return miss;
   },
 
-  canAfford(cost, wallet = S.res) { return RES_KEYS.every(r => wallet[r] >= (cost[r] || 0)); },
+  canAfford(cost, wallet = S.res) { return Object.keys(cost).every(r => (wallet[r] || 0) >= (cost[r] || 0)); },   // toutes les matières du coût (lunaires comprises)
 
   /* Secondes avant de pouvoir payer (Infinity si impossible) */
   etaFor(cost, kind = 'b') {
@@ -611,8 +678,7 @@ const G = {
     }
     // production des lunes : chacune dans son propre compteur
     for (const moon of S.moons) {
-      const m = this.moonRates(moon);
-      for (const r of RES_KEYS) moon.res[r] += m[r] * dt;
+      // (production lunaire uniquement par clic ; ascenseur masqué, sans effet)
     }
     S.time = now;
   },
@@ -622,8 +688,13 @@ const G = {
   click(auto = false, body = 'planet') {
     const onMoon = typeof body === 'number' && S.moons[body];
     const w = onMoon ? S.moons[body].res : S.res;
-    const caps = onMoon ? this.INF_CAPS : this.rates().caps;
-    const gains = this.clickGains(onMoon ? body : 'planet');
+    const caps = onMoon ? new Proxy({}, { get: () => Infinity }) : this.rates().caps;
+    let gains;
+    if (onMoon) {
+      const n = Math.min(this.moonLeft(onMoon), this.clickYield(onMoon.tech.extract) * this.rushMult());
+      onMoon.mined = (onMoon.mined || 0) + n;
+      gains = { [onMoon.mat]: n };
+    } else gains = this.clickGains('planet');
     const got = {};
     for (const r in gains) {
       const add = Math.max(0, Math.min(gains[r], caps[r] - w[r]));
@@ -656,9 +727,20 @@ const G = {
     if (!s.click.exchanger) s.click.exchanger = Math.max(s.click.xferDeut || 0, s.click.xferDark || 0);
     // lunes : migration de l'ancienne lune unique, puis complétion des champs
     const list = Array.isArray(data.moons) ? data.moons : (data.moon ? [data.moon] : []);
+    const used = [];
     s.moons = list.map(d => {
       const m = newMoon();
-      return { res: Object.assign(m.res, d.res), mines: Object.assign(m.mines, d.mines), tech: Object.assign(m.tech, d.tech), seed: d.seed || m.seed, name: d.name || m.name, cargoOn: d.cargoOn !== false };
+      const mat = moonMat(d.seed || m.seed);
+      used.push(mat);
+      const tech = Object.assign(m.tech, d.tech);
+      if (!d.mat) {
+        // ancienne lune : son stock de matériaux part vers la planète, ses mines deviennent le niveau d'extraction
+        for (const r of RES_KEYS) s.res[r] = (s.res[r] || 0) + ((d.res && d.res[r]) || 0);
+        tech.extract = Math.max(tech.extract || 0, ...Object.values(d.mines || {}).map(Number).filter(isFinite), 0);
+      }
+      const res = {}; RES_KEYS.forEach(r => res[r] = 0); res[mat] = Math.max(0, (d.mat && d.res && d.res[d.mat]) || 0);   // stock négatif (ancien bug) remis à 0
+      if (d.mat && d.res) res.darkMatter = Math.max(0, d.res.darkMatter || 0);   // matière noire propre à la lune
+      return { res, mines: Object.assign(m.mines, d.mines), tech, mat, seed: d.seed || m.seed, name: d.name || m.name, cargoOn: d.cargoOn !== false, mined: d.mined || 0 };
     });
     delete s.moon;
     delete s.ach.research;   // succès « Érudit » retiré

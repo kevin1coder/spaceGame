@@ -48,12 +48,6 @@
     // Achat automatique : vérifié 4 fois par seconde
     autoAcc += dt;
     if (autoAcc >= 0.25) { autoAcc = 0; G.autoBuyTick(); }
-    // ascenseurs gravitationnels : chaque lune envoie son stock vers la planète
-    S.moons.forEach((m, i) => {
-      if (m.tech.cargo < 1 || !m.cargoOn) return;
-      G.cargoT[i] = (G.cargoT[i] || 0) + dt;
-      if (G.cargoT[i] >= G.CARGO_PERIOD) { G.cargoT[i] = 0; UI.cargo(i); }
-    });
     // événements : toutes les 30 secondes, un événement tiré au sort (pirates compris)
     G.raidT += dt;
     S.stats.playTime = (S.stats.playTime || 0) + dt;   // chrono de la partie
@@ -74,9 +68,13 @@
       if (G.jackT >= G.jackpotPeriod()) { G.jackT -= G.jackpotPeriod(); UI.jackpot(); }
     }
     if (UI.viewKind() === 'm') {
-      // vue lune : la lune au centre, la planète mère en orbite
-      const lv = Object.values(G.curMoon().mines).reduce((a, b) => a + b, 0);
-      UI.body().render(ts, { lightDensity: Math.min(1, lv / 30), satellites: 0, parent: planet.traits.atm });
+      // vue lune : la lune au centre, la planète mère immense en bas du bloc (sa sphère est recalculée pour tourner)
+      // l'extraction réduit le diamètre de la lune ; le tremplin garde la taille d'origine
+      const moon = G.curMoon(), ex = moon.tech.extract || 0;
+      UI.body().render(ts, { lightDensity: 0, satellites: 0, horizon: planet,   // planète mère dessinée en grand, en bas du bloc
+        scale: G.moonScale(moon),                  // diamètre réduit par l'extraction
+        gate: (moon.tech.jump || 0) / 10,          // transformation en porte de saut
+        gateStyle: G.gateStyle(G.moonIdx()), gateColor: LUNAR_MATS[moon.mat].color, gateSeed: moon.seed });
     } else {
       snow += ((G.fxActive('ice') ? 1 : 0) - snow) * Math.min(1, dt * 0.35);
       forest += ((G.fxActive('forest') ? 1 : 0) - forest) * Math.min(1, dt * 0.3);
@@ -85,8 +83,15 @@
         buildings: { ...S.buildings, jackpot: S.click.jackpot || 0 },   // bâtiments dessinés sur la planète (+ accélérateur)
         lightDensity: Math.min(1, G.usedFields() / 60),
         satellites: Math.min(6, S.buildings.shipyard),
-        moons: S.moons.length,
+        moons: G.moonsGone() ? 0 : S.moons.length,
         moonColors: S.moons.map(m => moonColor(m.seed)),
+        moonLinks: S.moons.map(() => false),   // ascenseur masqué
+        moonScales: S.moons.map(m => G.moonScale(m)),
+        moonGates: S.moons.map(m => (m.tech.jump || 0) / 10),
+        moonNetwork: G.moonsJumpOk(10) && !G.moonsGone(),
+        debrisRing: G.moonsGone(),   // anneau de débris une fois la carte galactique créée   // 3 tremplins terminés : orbites bleues, arche en vol, anneau de débris
+        shieldDots: Math.min(800, S.fleet.destroyer || 0),   // un point blanc par Bouclier EM
+        moonGateInfo: S.moons.map((m, i) => ({ style: G.gateStyle(i), color: LUNAR_MATS[m.mat].color, seed: m.seed })),
         ships: Object.keys(SHIPS).flatMap(id => Array(Math.min(12, G.fleetTotal(id))).fill(SHIPS[id].color)),
       });
     }

@@ -223,7 +223,7 @@ class PlanetRenderer {
     let Lx = -0.62, Ly = -0.38, Lz = 0.69;
     const ln = Math.hypot(Lx, Ly, Lz); Lx /= ln; Ly /= ln; Lz /= ln;
 
-    const idx = [], u0 = [], row = [], shade = [], rim = [], alpha = [], latA = [];
+    const idx = [], u0 = [], row = [], shade = [], rim = [], alpha = [], latA = [], pa = [], pr = [];
     for (let py = 0; py < R * 2; py++) {
       for (let px = 0; px < R * 2; px++) {
         const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R;
@@ -239,17 +239,20 @@ class PlanetRenderer {
         rim.push(1 - nz);
         latA.push(Math.abs(lat) / (Math.PI / 2));
         alpha.push(Math.min(1, (1 - Math.sqrt(d2)) * R * 1.5) * 255);
+        pa.push(Math.floor(((Math.atan2(ny, nx) / (Math.PI * 2)) + 1) % 1 * 120) % 120);   // secteur angulaire
+        pr.push(Math.sqrt(d2));                                                          // distance au centre (0 à 1)
       }
     }
     this.map = {
       idx: Int32Array.from(idx), u0: Float32Array.from(u0), row: Int32Array.from(row),
       shade: Float32Array.from(shade), rim: Float32Array.from(rim), alpha: Uint8Array.from(alpha), latA: Float32Array.from(latA), n: idx.length,
+      pa: Uint8Array.from(pa), pr: Float32Array.from(pr),
     };
   }
 
   /* Coordonnées CSS relatives au canvas => sur la planète ? */
   hit(x, y) {
-    const c = this.cssSize / 2, R = this.cssSize * 0.33;
+    const c = this.cssSize / 2, R = this.cssSize * 0.33 * (this.sizeScale || 1);
     return Math.hypot(x - c, y - c) <= R * 1.04;
   }
 
@@ -823,6 +826,510 @@ class PlanetRenderer {
     }
   }
 
+  /* Tremplin gravitationnel : la lune devient une porte de saut (g de 0 à 1).
+     Une sphère d'acier à mailles hexagonales (polyèdre de Goldberg) se construit autour d'elle et tourne
+     avec la lune ; un horizon lumineux recouvre peu à peu sa surface. */
+  gateLattice() {
+    if (this._lattice) return this._lattice;
+    // icosaèdre subdivisé une fois (80 faces) ; son dual donne des hexagones (et 12 pentagones)
+    const t = (1 + Math.sqrt(5)) / 2;
+    let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
+    let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+      [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+    const norm = v => { const l = Math.hypot(...v); return v.map(c => c / l); };
+    V = V.map(norm);
+    const mid = {}, midpoint = (a, b) => {
+      const k = a < b ? a + '_' + b : b + '_' + a;
+      if (mid[k] == null) { V.push(norm(V[a].map((c, i) => (c + V[b][i]) / 2))); mid[k] = V.length - 1; }
+      return mid[k];
+    };
+    const F2 = [];
+    for (const [a, b, c] of F) { const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a); F2.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+    F = F2;
+    const C = F.map(f => norm([0, 1, 2].map(i => (V[f[0]][i] + V[f[1]][i] + V[f[2]][i]) / 3)));   // sommets du dual
+    const owner = {}, edges = [];
+    F.forEach((f, fi) => [[f[0], f[1]], [f[1], f[2]], [f[2], f[0]]].forEach(([a, b]) => {
+      const k = a < b ? a + '_' + b : b + '_' + a;
+      if (owner[k] == null) owner[k] = fi; else edges.push([owner[k], fi]);
+    }));
+    // ordre de construction : du bas vers le haut (par hauteur moyenne de l'arête)
+    edges.sort((e1, e2) => (C[e1[0]][1] + C[e1[1]][1]) - (C[e2[0]][1] + C[e2[1]][1]));
+    return (this._lattice = { C, edges, V, F: F.slice().sort((f1, f2) => (V[f1[0]][1] + V[f1[1]][1] + V[f1[2]][1]) - (V[f2[0]][1] + V[f2[1]][1] + V[f2[2]][1])) });
+  }
+
+  /* Tremplin gravitationnel : chaque lune a sa propre structure (g de 0 à 1, 10 niveaux).
+     style : 'ring' (anneau de saut), 'shell' (coquille de Dyson), 'crystal' (cristallisation).
+     R0 : rayon d'origine de la lune (la structure garde cette taille) ; Rm : rayon actuel. */
+  drawGate(t, cx, cy, R0, g, small = false, style = 'ring', color = '#8fe3ff', seed = 1, Rm = R0) {
+    const ctx = this.ctx, d = this.dpr, W = this.canvas.width;
+    const tilt = this.traits.tilt, cT = Math.cos(tilt), sT = Math.sin(tilt);
+    const spin = (t * 0.000011 + 0.5) * Math.PI * 2, cr = Math.cos(spin), sr = Math.sin(spin);
+    // projection d'un point de la sphère unité (qui tourne avec la lune)
+    const proj = (x, y, z, k) => {
+      const tx = x * cr - z * sr, nz = z * cr + x * sr;
+      return [cx + (tx * cT + y * sT) * k, cy + (-tx * sT + y * cT) * k, nz];
+    };
+    const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const hsh = (a, b) => { const x = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return x - Math.floor(x); };   // bruit fixe
+    const tone = (h, k) => { const [r, gg, b] = hex(h); const f = v => Math.max(0, Math.min(255, Math.round(k >= 1 ? v + (255 - v) * (k - 1) : v * k))); return `rgb(${f(r)},${f(gg)},${f(b)})`; };
+    ctx.save();
+    ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // ===== Idée 6 : les trois étages d'un lanceur (chantier, réservoir, rail d'accélération) =====
+    // structures posées au sommet de la lune, en 3D, qui tournent avec elle ; construites niveau par niveau
+    if (style === 'yard' || style === 'tank' || style === 'rail') {
+      const ar = Math.max(0.25, Rm / R0);                       // ancrage : surface actuelle de la lune
+      // vue légèrement plongeante (on voit le dessus des structures posées au sommet de la lune)
+      const cp = Math.cos(0.5), sp = Math.sin(0.5);
+      const rv = ([x, y, z]) => { const tx = x * cr - z * sr, nz = z * cr + x * sr, sx = tx * cT + y * sT, sy = -tx * sT + y * cT; return [sx, sy * cp + nz * sp, nz * cp - sy * sp]; };
+      const LT = [-0.45, -0.65, 0.61];
+      const items = [];                                          // faces et sphères, triées par profondeur
+      let hideBehind = false;
+      const behind = p => hideBehind && p[2] < 0.02 && Math.hypot(p[0], p[1]) < ar;
+      const up = (x, h, z) => [x, -(ar + h), z];                 // point local : x, z au sol, h en hauteur
+      const face = (pts, col, glow) => {
+        const P = pts.map(rv);
+        const e1 = P[1].map((v, j) => v - P[0][j]), e2 = P[2].map((v, j) => v - P[0][j]);
+        let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        const nl = Math.hypot(...n) || 1; n = n.map(v => v / nl); if (n[2] < 0) n = n.map(v => -v);
+        const lit = 0.4 + 0.85 * Math.max(0, n[0] * LT[0] + n[1] * LT[1] + n[2] * LT[2]);
+        items.push({ z: P.reduce((s, p) => s + p[2], 0) / P.length, draw: () => {
+          ctx.beginPath(); P.forEach((p, i) => { const x = cx + p[0] * R0, y = cy + p[1] * R0; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
+          ctx.fillStyle = glow ? col : tone(col, lit); ctx.fill();
+          if (!small) { ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = Math.max(0.4, d * 0.6); ctx.stroke(); }
+        } });
+      };
+      const box = (x0, x1, z0, z1, h0, h1, col) => {
+        const c = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+        face(c.map(([x, z]) => up(x, h1, z)), col);
+        for (let k = 0; k < 4; k++) { const a = c[k], b = c[(k + 1) % 4]; face([up(a[0], h0, a[1]), up(b[0], h0, b[1]), up(b[0], h1, b[1]), up(a[0], h1, a[1])], col); }
+      };
+      const ball = (x, h, z, r, c0, c1, c2) => {
+        const p = rv(up(x, h, z));
+        if (behind(p)) return;
+        items.push({ z: p[2], draw: () => {
+          const X = cx + p[0] * R0, Y = cy + p[1] * R0, rr = r * R0;
+          const gr = ctx.createRadialGradient(X - rr * 0.35, Y - rr * 0.35, rr * 0.1, X, Y, rr);
+          gr.addColorStop(0, c0); gr.addColorStop(0.55, c1); gr.addColorStop(1, c2);
+          ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(X, Y, rr, 0, Math.PI * 2); ctx.fill();
+        } });
+      };
+      // primitives supplémentaires : cylindre vertical à facettes, tuyau (polyligne), anneau autour d'un axe
+      const cyl = (x, z, r, h0, h1, col, sides = 10, cap = col) => {
+        for (let k = 0; k < sides; k++) {
+          const a0 = k / sides * Math.PI * 2, a1 = (k + 1) / sides * Math.PI * 2;
+          face([up(x + r * Math.cos(a0), h0, z + r * Math.sin(a0)), up(x + r * Math.cos(a1), h0, z + r * Math.sin(a1)),
+            up(x + r * Math.cos(a1), h1, z + r * Math.sin(a1)), up(x + r * Math.cos(a0), h1, z + r * Math.sin(a0))], col);
+        }
+        face(Array.from({ length: sides }, (_, k) => { const a = k / sides * Math.PI * 2; return up(x + r * Math.cos(a), h1, z + r * Math.sin(a)); }), cap);
+      };
+      const pipe = (pts, col, w) => {                            // chaque tronçon est trié à part (passe devant / derrière)
+        for (let k = 0; k < pts.length - 1; k++) {
+          const a = rv(up(...pts[k])), b = rv(up(...pts[k + 1]));
+          if (behind(a) && behind(b)) continue;
+          items.push({ z: (a[2] + b[2]) / 2 + 0.001, draw: () => {
+            ctx.strokeStyle = '#0a0d12'; ctx.lineWidth = Math.max(1, d * (w + 1.2)); ctx.beginPath(); ctx.moveTo(cx + a[0] * R0, cy + a[1] * R0); ctx.lineTo(cx + b[0] * R0, cy + b[1] * R0); ctx.stroke();
+            ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.6, d * w); ctx.stroke();
+          } });
+        }
+      };
+      const loop = (c, u, v, r, col, w, N = 20) => {             // cercle de centre c, dans le plan (u, v)
+        const pts = []; for (let k = 0; k <= N; k++) { const a = k / N * Math.PI * 2; pts.push([0, 1, 2].map(j => c[j] + (u[j] * Math.cos(a) + v[j] * Math.sin(a)) * r)); }
+        pipe(pts, col, w);
+      };
+      const n = Math.round(g * 10), sm = small ? 0.6 : 1;
+      // cylindre couché le long de l'axe x (modules, fuselage)
+      const cylX = (x0, x1, h, z, r, col, sides = 10) => {
+        for (let k = 0; k < sides; k++) {
+          const a0 = k / sides * Math.PI * 2, a1 = (k + 1) / sides * Math.PI * 2;
+          face([up(x0, h + r * Math.cos(a0), z + r * Math.sin(a0)), up(x1, h + r * Math.cos(a0), z + r * Math.sin(a0)),
+            up(x1, h + r * Math.cos(a1), z + r * Math.sin(a1)), up(x0, h + r * Math.cos(a1), z + r * Math.sin(a1))], col);
+        }
+        for (const xe of [x0, x1]) face(Array.from({ length: sides }, (_, k) => { const a = k / sides * Math.PI * 2; return up(xe, h + r * Math.cos(a), z + r * Math.sin(a)); }), col);
+      };
+      if (style === 'yard') {                                    // chantier : vaisseau à soucoupe et nacelles (inspiration space opera)
+        const H = 0.72, sg = Math.min(1, n / 3);                 // la soucoupe s'élargit sur les 3 premiers niveaux
+        if (n >= 1) {
+          cyl(0.16, 0, 0.32 * sg, H - 0.025, H + 0.025, '#d7dee7', 20, '#eef2f6');          // soucoupe
+          cyl(0.16, 0, 0.1 * sg, H + 0.025, H + 0.05, '#c3ccd6', 12, '#e9eef4');            // passerelle
+          if (n >= 10) for (let k = 0; k < 14; k++) {                                        // hublots allumés
+            const a = k / 14 * Math.PI * 2, p = rv(up(0.16 + Math.cos(a) * 0.3, H, Math.sin(a) * 0.3));
+            items.push({ z: p[2] + 0.002, draw: () => { ctx.fillStyle = '#ffe9a8'; ctx.fillRect(cx + p[0] * R0 - d * 0.7, cy + p[1] * R0 - d * 0.7, d * 1.4, d * 1.4); } });
+          }
+        }
+        if (n >= 3) {                                            // cou et coque secondaire
+          box(-0.06, 0.06, -0.035, 0.035, H - 0.12, H - 0.02, '#c9d3de');
+          cylX(-0.4, 0.02, H - 0.15, 0, 0.065 * Math.min(1, (n - 2) / 2), '#dfe6ee', 12);
+          if (n >= 10) ball(0.03, H - 0.15, 0, 0.045, '#ffffff', '#7fd3ff', 'rgba(79,157,255,0)');   // déflecteur
+        }
+        if (n >= 5) for (const zz of [-0.22, 0.22]) {           // pylônes
+          pipe([[-0.25, H - 0.13, zz * 0.2], [-0.3, H + 0.02, zz]], '#c3ccd6', 2.2 * sm);
+        }
+        if (n >= 7) for (const zz of [-0.22, 0.22]) {           // nacelles
+          const L = Math.min(1, (n - 6) / 3);
+          cylX(-0.55, -0.55 + 0.42 * L, H + 0.04, zz, 0.035, '#c9d3de', 10);
+          if (n >= 10) {
+            ball(-0.13, H + 0.04, zz, 0.032, '#ffd0c8', '#ff5a4a', 'rgba(255,90,74,0)');   // capteurs avant rouges
+            const a = rv(up(-0.53, H + 0.04, zz)), b = rv(up(-0.15, H + 0.04, zz));      // bande bleue lumineuse
+            items.push({ z: Math.max(a[2], b[2]) + 0.003, draw: () => { ctx.strokeStyle = 'rgba(127,211,255,0.95)'; ctx.lineWidth = Math.max(1, d * 1.6); ctx.beginPath(); ctx.moveTo(cx + a[0] * R0, cy + a[1] * R0); ctx.lineTo(cx + b[0] * R0, cy + b[1] * R0); ctx.stroke(); } });
+          }
+        }
+        if (n > 0 && n < 10 && !small && Math.sin(t * 0.02 + seed) > 0.2) ball(-0.1, H, 0.12, 0.03, '#fff6d0', '#ffb36b', 'rgba(255,140,90,0)');   // soudure
+      } else if (style === 'tank') {                             // réservoir : 9 sphères en cube posé sur la pointe (façon atomium)
+        // sommets d'un cube (±1) + centre, la grande diagonale à la verticale
+        const a3 = Math.sqrt(3), e1 = [1 / Math.SQRT2, -1 / Math.SQRT2, 0], e2 = [1 / Math.sqrt(6), 1 / Math.sqrt(6), -2 / Math.sqrt(6)], ax = [1 / a3, 1 / a3, 1 / a3];
+        const S2 = 0.62, HC = -ar, dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+        const V = [[0, 0, 0]];
+        for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) V.push([x, y, z]);
+        const pos = V.map(v => [dot(v, e1) * S2, HC + dot(v, ax) * S2, dot(v, e2) * S2]);
+        // ordre de construction : du bas vers le haut, le centre en premier
+        const order = pos.map((p, i) => i).sort((i, j) => (i === 0 ? -1 : j === 0 ? 1 : pos[i][1] - pos[j][1]));
+        const k = Math.min(9, Math.ceil(n * 0.9)), built = new Set(order.slice(0, k));
+        // tubes : arêtes du cube et liaisons centre → sommets
+        const edges = [];
+        for (let i = 1; i < 9; i++) { edges.push([0, i]); for (let j = i + 1; j < 9; j++) { const dv = V[i].map((c, q) => c - V[j][q]); if (Math.abs(dv[0]) + Math.abs(dv[1]) + Math.abs(dv[2]) === 2) edges.push([i, j]); } }
+        hideBehind = true;   // ce qui passe derrière la lune est caché par elle
+        for (const [i, j] of edges) if (built.has(i) && built.has(j)) pipe([[pos[i][0], pos[i][1], pos[i][2]], [pos[j][0], pos[j][1], pos[j][2]]].map(([x, h, z]) => [x, h, z]), '#9aa4b0', 2.4 * sm);
+        for (const i of built) {
+          const [x, h, z] = pos[i], r = 0.11;
+          ball(x, h, z, r, '#ffffff', '#c9d6e4', '#4a5563');
+          loop([x, h, z], [1, 0, 0], [0, 0, 1], r * 1.03, '#3a4350', 1.1 * sm, 14);   // renfort à l'équateur
+          if (n >= 10) loop([x, h, z], [1, 0, 0], [0, 1, 0], r * 1.03, '#7fd3ff', 0.9 * sm, 14);
+        }
+      } else {                                                   // rail d'accélération : faisceau de rails, traverses, anneaux
+        const len = 0.2 + 0.95 * (n / 10), lean = 0.75;
+        const ax = [Math.sin(lean), Math.cos(lean), 0], p1 = [Math.cos(lean), -Math.sin(lean), 0], p2 = [0, 0, 1];
+        const at = (s, a = 0, b = 0) => [0, 1, 2].map(j => ax[j] * s + p1[j] * a + p2[j] * b + (j === 1 ? 0.06 : 0));
+        // pylônes de soutien
+        pipe([[-0.15, 0, -0.12], at(len * 0.35, -0.05, -0.05)], '#6b7480', 1.6 * sm);
+        pipe([[-0.15, 0, 0.12], at(len * 0.35, -0.05, 0.05)], '#6b7480', 1.6 * sm);
+        pipe([[0.1, 0, 0], at(len * 0.2, -0.05, 0)], '#6b7480', 1.6 * sm);
+        // plusieurs longs rails dans l'axe
+        for (const [a, b] of [[-0.05, -0.05], [-0.05, 0.05], [0.05, -0.05], [0.05, 0.05], [0, 0]])
+          pipe([at(0, a, b), at(len, a, b)], a || b ? '#9aa4b0' : '#c3ccd6', (a || b ? 1.2 : 1.8) * sm);
+        // nombreuses petites traverses perpendiculaires
+        const ties = Math.round(len * 40);
+        for (let i = 0; i <= ties; i++) {
+          const s = len * i / ties;
+          pipe([at(s, -0.07, 0), at(s, 0.07, 0)], '#6b7480', 0.8 * sm);
+          if (i % 2 === 0) pipe([at(s, 0, -0.07), at(s, 0, 0.07)], '#5d6672', 0.8 * sm);
+        }
+        // anneaux d'accélération
+        const rings = Math.floor(n / 2);
+        for (let i = 1; i <= rings; i++) {
+          const on = n >= 10 ? (0.6 + 0.4 * Math.sin(t * 0.006 - i) > 0.5 ? '#ffb347' : '#c98a3a') : '#b8893f';
+          loop(at(len * i / (rings + 0.5)), p1, p2, 0.11, on, 2 * sm, 16);
+        }
+      }
+      items.sort((a, b) => a.z - b.z).forEach(it => it.draw());
+      ctx.restore();
+      return;
+    }
+    if (style === 'ring') {                           // 1 — anneau de saut autour de l'équateur
+      const n = Math.round(g * 10), Rr = R0 * 0.88, pitch = 0.36, cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const rp = a => {                                // point de l'anneau (tourne avec la lune, vu légèrement de dessus)
+        const x = Math.cos(a), z = Math.sin(a), tx = x * cr - z * sr, nz = z * cr + x * sr;
+        const y2 = -nz * sp, z2 = nz * cp;
+        return [cx + (tx * cT + y2 * sT) * Rr, cy + (-tx * sT + y2 * cT) * Rr, z2];
+      };
+      const seg = (k, front) => {
+        const a0 = k * Math.PI / 5 + 0.05, a1 = a0 + Math.PI / 5 - 0.1, pts = [];
+        for (let j = 0; j <= 8; j++) pts.push(rp(a0 + (a1 - a0) * j / 8));
+        for (let j = 0; j < 8; j++) {
+          const z = (pts[j][2] + pts[j + 1][2]) / 2;
+          if ((z >= 0) !== front) continue;
+          const l = 0.45 + 0.55 * Math.max(0, z), nz = hsh(k, j);
+          // plaques de métal irrégulières : teintes variées, quelques plaques sombres ou rouillées
+          const base = nz < 0.15 ? '#1d2228' : nz > 0.85 ? '#4a3c32' : '#3a434f';
+          ctx.beginPath(); ctx.moveTo(pts[j][0], pts[j][1]); ctx.lineTo(pts[j + 1][0], pts[j + 1][1]);
+          ctx.strokeStyle = '#07090c'; ctx.lineWidth = R0 * (small ? 0.2 : 0.16); ctx.stroke();
+          ctx.strokeStyle = tone(base, l * (0.75 + 0.5 * hsh(j, k + 7))); ctx.lineWidth = R0 * (small ? 0.12 : 0.1); ctx.stroke();
+          if (!small && hsh(k + 3, j) > 0.5) { ctx.fillStyle = 'rgba(200,210,225,0.55)'; ctx.beginPath(); ctx.arc(pts[j][0], pts[j][1], Math.max(0.8, d * 1.1), 0, Math.PI * 2); ctx.fill(); }   // rivet
+          if (!small) { ctx.strokeStyle = `rgba(220,235,255,${0.2 + 0.4 * Math.max(0, z)})`; ctx.lineWidth = Math.max(0.6, d); ctx.stroke(); }
+        }
+        if (!small && front) {                         // feu bleu au milieu du segment
+          const m = rp((a0 + a1) / 2);
+          if (m[2] >= 0) { const a = 0.5 + 0.5 * Math.sin(t * 0.0007 + k * 1.7); ctx.fillStyle = `rgba(150,215,255,${0.4 + 0.6 * a})`; ctx.beginPath(); ctx.arc(m[0], m[1], Math.max(1, d * 2), 0, Math.PI * 2); ctx.fill(); }
+        }
+      };
+      // moitié arrière : seulement hors du disque de la lune
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, W); ctx.arc(cx, cy, Rm, 0, Math.PI * 2); ctx.clip('evenodd');
+      for (let k = 0; k < n; k++) seg(k, false);
+      ctx.restore();
+      // vortex au centre, une fois l'anneau terminé
+      if (g >= 1) {
+        ctx.save(); ctx.translate(cx, cy); ctx.rotate(-tilt); ctx.scale(1, sp);
+        const vg = ctx.createRadialGradient(0, 0, 0, 0, 0, Rr * 0.93);
+        vg.addColorStop(0, 'rgba(235,250,255,0.95)'); vg.addColorStop(0.5, 'rgba(90,170,255,0.85)'); vg.addColorStop(1, 'rgba(20,50,140,0.6)');
+        ctx.fillStyle = vg; ctx.beginPath(); ctx.arc(0, 0, Rr * 0.93, 0, Math.PI * 2); ctx.fill();
+        if (!small) {
+          ctx.strokeStyle = 'rgba(210,240,255,0.55)'; ctx.lineWidth = Math.max(1, d * 1.4);
+          for (let s = 0; s < 3; s++) {
+            ctx.beginPath();
+            for (let j = 0; j <= 40; j++) { const q = j / 40, a = t * 0.0012 + s * 2.09 + q * 4, rr = Rr * 0.9 * (1 - q); j ? ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+      for (let k = 0; k < n; k++) seg(k, true);
+      if (!small) for (let k = n; k < 10; k++) {       // emplacements encore vides
+        const a0 = k * Math.PI / 5 + 0.05, a1 = a0 + Math.PI / 5 - 0.1, p0 = rp(a0), p1 = rp(a1);
+        if ((p0[2] + p1[2]) / 2 < 0) continue;
+        ctx.setLineDash([d * 3, d * 4]); ctx.strokeStyle = 'rgba(160,180,210,0.35)'; ctx.lineWidth = Math.max(0.6, d);
+        ctx.beginPath(); for (let j = 0; j <= 6; j++) { const p = rp(a0 + (a1 - a0) * j / 6); j ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); } ctx.stroke(); ctx.setLineDash([]);
+      }
+    } else if (style === 'shell') {                   // 3 — coquille de Dyson : plaques qui recouvrent la lune
+      const { V, F } = this.gateLattice(), n = Math.round(g * F.length), k = R0 * 1.03;
+      const plates = [];
+      for (let i = 0; i < n; i++) {
+        const f = F[i], c = [0, 1, 2].map(j => (V[f[0]][j] + V[f[1]][j] + V[f[2]][j]) / 3);
+        const pc = proj(c[0], c[1], c[2], k);
+        if (pc[2] < 0.02) continue;
+        plates.push({ pts: f.map(vi => { const v = V[vi]; return proj(c[0] + (v[0] - c[0]) * 0.9, c[1] + (v[1] - c[1]) * 0.9, c[2] + (v[2] - c[2]) * 0.9, k); }), z: pc[2], i, pc });
+      }
+      plates.sort((a, b) => a.z - b.z);
+      for (const p of plates) {
+        ctx.beginPath(); p.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+        const nz = hsh(p.i, 3), base = nz < 0.12 ? '#1f242b' : nz > 0.88 ? '#4d4036' : nz > 0.7 ? '#4a5563' : '#3b434e';
+        // dégradé dans la plaque (usure) et teinte propre à chaque plaque
+        const lp = (0.4 + 0.6 * p.z) * (0.7 + 0.45 * hsh(p.i, 9));
+        const gr = ctx.createLinearGradient(p.pts[0][0], p.pts[0][1], p.pc[0], p.pc[1]);
+        gr.addColorStop(0, tone(base, lp * 0.8)); gr.addColorStop(1, tone(base, lp * 1.15));
+        ctx.fillStyle = gr; ctx.fill();
+        ctx.strokeStyle = '#0a0d12'; ctx.lineWidth = Math.max(0.5, d * (small ? 0.5 : 1)); ctx.stroke();
+        if (!small) {   // joint de panneau et petite trappe sur certaines plaques
+          const e = p.pts[1 + (p.i % 2)], mx = (p.pts[0][0] + e[0]) / 2, my = (p.pts[0][1] + e[1]) / 2;
+          ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = Math.max(0.4, d * 0.6);
+          ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(p.pc[0], p.pc[1]); ctx.stroke();
+          if (hsh(p.i, 5) > 0.7) { ctx.fillStyle = 'rgba(10,12,16,0.6)'; ctx.fillRect(p.pc[0] - d * 2, p.pc[1] - d * 1.5, d * 4, d * 3); }
+        }
+        if (g >= 1) {                                  // coquille fermée : lignes lumineuses
+          ctx.strokeStyle = `rgba(120,210,255,${(0.35 + 0.25 * Math.sin(t * 0.0015)) * p.z})`; ctx.lineWidth = Math.max(0.5, d * (small ? 0.6 : 1.2)); ctx.stroke();
+        }
+      }
+    } else {                                          // 7 — cristallisation : des cristaux recouvrent la lune
+      // cristaux 3D irréguliers : prismes à 4-6 pans terminés en pointe, inclinés, de tailles et teintes variées,
+      // regroupés en amas ; chaque face est éclairée selon son orientation
+      if (!this._crys || this._crys.seed !== seed) {
+        const rnd = mulberry32(seed ^ 0x51f15e), list = [];
+        const norm = v => { const l = Math.hypot(...v) || 1; return v.map(c => c / l); };
+        const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        for (let i = 0; i < 34; i++) {
+          const uu = rnd() * 2 - 1, aa = rnd() * Math.PI * 2, s = Math.sqrt(1 - uu * uu), site = [s * Math.cos(aa), uu, s * Math.sin(aa)];
+          const ref = Math.abs(site[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], tu = norm(cross(site, ref)), tw = cross(site, tu);
+          const nCl = 1 + Math.floor(rnd() * 3);                  // 1 à 3 cristaux par amas
+          for (let c = 0; c < nCl; c++) {
+            const off = c ? 0.05 + rnd() * 0.06 : 0, oa = rnd() * Math.PI * 2;
+            const v = norm(site.map((x, j) => x + (tu[j] * Math.cos(oa) + tw[j] * Math.sin(oa)) * off));
+            const lean = 0.1 + rnd() * 0.45, la = rnd() * Math.PI * 2;   // inclinaison par rapport à la verticale
+            const axis = norm(v.map((x, j) => x + (tu[j] * Math.cos(la) + tw[j] * Math.sin(la)) * lean));
+            const ref2 = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0], u = norm(cross(axis, ref2)), w = cross(axis, u);
+            const sides = 4 + Math.floor(rnd() * 3), big = c ? 0.6 + rnd() * 0.3 : 1;
+            list.push({ v, axis, u, w, sides, rot: rnd() * Math.PI,
+              r: (0.045 + rnd() * 0.05) * big, h1: (0.12 + rnd() * 0.3) * big, h2: (0.06 + rnd() * 0.12) * big,
+              jit: Array.from({ length: sides }, () => 0.75 + rnd() * 0.5), k: 0.8 + rnd() * 0.45 });
+          }
+        }
+        this._crys = { seed, list };
+      }
+      // vecteur de la sphère → espace écran (même rotation que la lune)
+      const rv = ([x, y, z]) => { const tx = x * cr - z * sr, nz = z * cr + x * sr; return [tx * cT + y * sT, -tx * sT + y * cT, nz]; };
+      const LT = (() => { const l = [-0.5, -0.62, 0.6], m = Math.hypot(...l); return l.map(x => x / m); })();
+      const list = this._crys.list, n = Math.round(g * list.length), crystals = [];
+      for (let i = 0; i < n; i++) {
+        // posés sur la surface actuelle de la lune (elle rétrécit) ; les cristaux grandissent pour la remplacer
+        const c = list[i], br = Math.max(0.35, Rm / R0 * 0.95), base = c.v.map(x => x * br), gs = 1 + (1 - br) * 1.2;
+        const bz = rv(base)[2];
+        if (bz < -0.08) continue;                                 // derrière la lune
+        const ring = (hh, sc) => Array.from({ length: c.sides }, (_, k) => {
+          const a = c.rot + k * Math.PI * 2 / c.sides, rr = c.r * gs * sc * c.jit[k];
+          return base.map((x, j) => x + c.axis[j] * hh + (c.u[j] * Math.cos(a) + c.w[j] * Math.sin(a)) * rr);
+        });
+        // pied du cristal au centre de la lune, plus fin, puis le prisme sort de la surface
+        const deep = Array.from({ length: c.sides }, (_, k) => { const a = c.rot + k * Math.PI * 2 / c.sides, rr = c.r * gs * 0.35; return c.v.map((x, j) => x * 0.02 + (c.u[j] * Math.cos(a) + c.w[j] * Math.sin(a)) * rr); });
+        const b = ring(0, 1), tp = ring(c.h1 * gs, 0.82), tip = base.map((x, j) => x + c.axis[j] * (c.h1 + c.h2) * gs);
+        const faces = [];
+        for (let k = 0; k < c.sides; k++) {
+          const k1 = (k + 1) % c.sides;
+          faces.push([deep[k], deep[k1], b[k1], b[k]], [b[k], b[k1], tp[k1], tp[k]], [tp[k], tp[k1], tip]);
+        }
+        crystals.push({ faces, z: bz, k: c.k });
+      }
+      crystals.sort((a, b) => a.z - b.z);
+      if (g >= 1) {                                    // cristal géant : halo pulsant derrière
+        const pa = 0.25 + 0.2 * Math.sin(t * 0.002), gl = ctx.createRadialGradient(cx, cy, R0 * 0.3, cx, cy, R0 * 1.7);
+        const [r, gg, b] = hex(color);
+        gl.addColorStop(0, `rgba(${r},${gg},${b},${pa})`); gl.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(cx, cy, R0 * 1.7, 0, Math.PI * 2); ctx.fill();
+      }
+      for (const cry of crystals) {
+        const fs = [];
+        for (const f of cry.faces) {
+          const P = f.map(rv);
+          const e1 = P[1].map((x, j) => x - P[0][j]), e2 = P[2].map((x, j) => x - P[0][j]);
+          let nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
+          const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+          if (nz <= 0) continue;                                  // face tournée vers l'arrière
+          const lit = 0.35 + 0.9 * Math.max(0, nx * LT[0] + ny * LT[1] + nz * LT[2]);
+          fs.push({ P, lit: lit * (0.78 + 0.44 * hsh(fs.length, cry.k * 100)), z: P.reduce((s, p) => s + p[2], 0) / P.length });   // facettes irrégulières
+        }
+        fs.sort((a, b) => a.z - b.z);
+        for (const f of fs) {
+          ctx.beginPath(); f.P.forEach((p, i) => { const x = cx + p[0] * R0, y = cy + p[1] * R0; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
+          const fg = ctx.createLinearGradient(cx + f.P[0][0] * R0, cy + f.P[0][1] * R0, cx + f.P[f.P.length - 1][0] * R0, cy + f.P[f.P.length - 1][1] * R0);
+          fg.addColorStop(0, tone(color, f.lit * cry.k * 0.85)); fg.addColorStop(1, tone(color, f.lit * cry.k * 1.2));
+          ctx.fillStyle = fg; ctx.globalAlpha = 0.93; ctx.fill(); ctx.globalAlpha = 1;
+          if (!small) { ctx.strokeStyle = `rgba(255,255,255,${0.12 + 0.3 * f.lit})`; ctx.lineWidth = Math.max(0.4, d * 0.7); ctx.stroke(); }
+        }
+      }
+      if (g >= 1) {                                    // la lune est devenue un cristal géant à facettes
+        const top = [cx, cy - R0 * 1.45], bot = [cx, cy + R0 * 1.25], eq = [];
+        for (let k = 0; k < 6; k++) { const a = spin + k * Math.PI / 3; eq.push([cx + Math.cos(a) * R0 * 1.05, cy + Math.sin(a) * R0 * 0.3, Math.sin(a), a]); }
+        const facets = [];
+        for (let k = 0; k < 6; k++) {
+          const e0 = eq[k], e1 = eq[(k + 1) % 6], z = (e0[2] + e1[2]) / 2, am = (e0[3] + e1[3]) / 2;
+          if (z < -0.05) continue;
+          facets.push({ z, l: 0.55 + 0.45 * Math.cos(am + 2.2), tri: [top, e0, e1], low: [bot, e0, e1] });
+        }
+        facets.sort((a, b) => a.z - b.z);
+        for (const f of facets) for (const [tri, k2] of [[f.tri, 1.45], [f.low, 1.05]]) {
+          ctx.beginPath(); tri.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+          ctx.fillStyle = tone(color, f.l * k2); ctx.globalAlpha = 0.92; ctx.fill(); ctx.globalAlpha = 1;
+          ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = Math.max(0.5, d * (small ? 0.5 : 1)); ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  /* Planète mère vue depuis une lune : un horizon immense en bas du bloc. La calotte visible est
+     calculée pixel par pixel avec la vraie texture de la planète (terres, océans, nuages, éclairage),
+     à la résolution de l'écran : rendu net et réaliste. */
+  drawHorizon(t, cx, W, parent) {
+    const ctx = this.ctx, atm = parent.traits.atm;
+    const BR = W * 1.05, pcy = W + BR * 0.8, top = Math.max(0, Math.floor(pcy - BR));
+    const H = W - top;
+    if (H <= 0) return;
+    // précalcul de la calotte (une fois par taille de canevas)
+    if (!this._hz || this._hz.W !== W || this._hz.seed !== parent.seed) {
+      const al = 1.15, ca = Math.cos(al), sa = Math.sin(al);   // inclinaison : on regarde la région équatoriale
+      let Lx = -0.55, Ly = -0.7, Lz = 0.45; const ln = Math.hypot(Lx, Ly, Lz); Lx /= ln; Ly /= ln; Lz /= ln;
+      const idx = [], u0 = [], row = [], shade = [], rim = [], edge = [];
+      const TW = parent.TW, TH = parent.TH;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const nx = (x + 0.5 - cx) / BR, ny = (top + y + 0.5 - pcy) / BR, d2 = nx * nx + ny * ny;
+          if (d2 > 1) continue;
+          const nz = Math.sqrt(1 - d2);
+          const y2 = ny * ca - nz * sa, z2 = ny * sa + nz * ca;
+          const lon = Math.atan2(nx, z2), lat = Math.asin(Math.max(-1, Math.min(1, y2)));
+          idx.push((y * W + x) * 4);
+          u0.push(lon / (Math.PI * 2) + 0.5);
+          row.push(Math.min(TH - 1, Math.floor((lat / Math.PI + 0.5) * TH)) * TW);
+          shade.push(Math.max(0, nx * Lx + ny * Ly + nz * Lz));
+          rim.push(1 - nz);
+          edge.push(Math.min(1, (1 - Math.sqrt(d2)) * BR * 1.2));
+        }
+      }
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+      const cctx = cv.getContext('2d');
+      this._hz = { W, seed: parent.seed, top, H, cv, cctx, img: cctx.createImageData(W, H),
+        idx: Int32Array.from(idx), u0: Float32Array.from(u0), row: Int32Array.from(row),
+        shade: Float32Array.from(shade), rim: Float32Array.from(rim), edge: Float32Array.from(edge) };
+    }
+    const hz = this._hz, data = hz.img.data, tex = parent.tex, cloud = parent.cloud, TW = parent.TW;
+    const rot = t * 0.000004, crot = t * 0.0000055;
+    for (let i = 0; i < hz.idx.length; i++) {
+      let u = hz.u0[i] + rot; u -= Math.floor(u);
+      let cu = hz.u0[i] + crot; cu -= Math.floor(cu);
+      const ti = hz.row[i] + ((u * TW) | 0), ca = cloud[hz.row[i] + ((cu * TW) | 0)] / 255;
+      let r = tex[ti * 3], g = tex[ti * 3 + 1], b = tex[ti * 3 + 2];
+      r += (245 - r) * ca * 0.85; g += (248 - g) * ca * 0.85; b += (255 - b) * ca * 0.85;
+      const l = 0.12 + 0.95 * hz.shade[i];
+      r *= l; g *= l; b *= l;
+      const a = Math.pow(hz.rim[i], 2.2) * 0.9;   // diffusion de l'atmosphère vers le bord
+      r += atm[0] * a; g += atm[1] * a; b += atm[2] * a;
+      const p = hz.idx[i];
+      data[p] = r; data[p + 1] = g; data[p + 2] = b; data[p + 3] = hz.edge[i] * 255;
+    }
+    hz.cctx.putImageData(hz.img, 0, 0);
+    ctx.save();
+    // halo de l'atmosphère au-dessus de l'horizon
+    const hg = ctx.createRadialGradient(cx, pcy, BR * 0.985, cx, pcy, BR * 1.09);
+    hg.addColorStop(0, `rgba(${atm[0]},${atm[1]},${atm[2]},0.55)`); hg.addColorStop(1, `rgba(${atm[0]},${atm[1]},${atm[2]},0)`);
+    ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(cx, pcy, BR * 1.09, 0, Math.PI * 2); ctx.fill();
+    ctx.drawImage(hz.cv, 0, hz.top);
+    ctx.restore();
+  }
+
+  /* Anneau de débris autour de la planète : bande translucide et milliers d'éclats qui tournent.
+     La moitié arrière passe derrière la planète. */
+  drawDebrisRing(t, cx, cy, R) {
+    const ctx = this.ctx, d = this.dpr, tl = this.traits.tilt * 0.6, flat = 0.2;
+    if (!this._debris) {
+      const rnd = mulberry32(0x5eed1234), list = [];
+      for (let i = 0; i < 900; i++) list.push({ r: 1.22 + Math.pow(rnd(), 0.8) * 0.27, a: rnd() * Math.PI * 2, s: 0.6 + rnd() * 0.8, k: 0.5 + rnd() * 0.5, w: rnd() < 0.15 ? 1.8 : 1 });
+      this._debris = list;
+    }
+    const cT = Math.cos(tl), sT = Math.sin(tl);
+    ctx.save();
+    // bandes translucides (devant ; derrière, seulement hors de la planète)
+    for (const half of [1, 0]) {
+      ctx.save();
+      if (half === 0) { ctx.beginPath(); ctx.rect(0, 0, this.canvas.width, this.canvas.width); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip('evenodd'); }
+      for (const [rr, a, w] of [[1.27, 0.16, 0.07], [1.37, 0.11, 0.08], [1.46, 0.07, 0.05]]) {
+        ctx.strokeStyle = `rgba(200,185,160,${a})`; ctx.lineWidth = R * w * flat * 2.5;
+        ctx.beginPath(); ctx.ellipse(cx, cy, R * rr, R * rr * flat, tl, half ? 0 : Math.PI, half ? Math.PI : Math.PI * 2); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // éclats de roche
+    for (const p of this._debris) {
+      const a = p.a + t * 0.00004 / p.r * p.s, x0 = Math.cos(a) * p.r * R, y0 = Math.sin(a) * p.r * R * flat;
+      const x = cx + x0 * cT - y0 * sT, y = cy + x0 * sT + y0 * cT;
+      if (Math.sin(a) < 0 && Math.hypot(x - cx, y - cy) < R) continue;   // derrière la planète
+      const c = 150 + 90 * p.k | 0;
+      ctx.fillStyle = `rgb(${c},${c - 15},${c - 35})`;
+      ctx.fillRect(x, y, d * p.w, d * p.w);
+    }
+    ctx.restore();
+  }
+
+  /* Boucliers EM : un point blanc par bouclier, chacun sur sa propre orbite autour de la planète */
+  drawShieldDots(t, cx, cy, R, n) {
+    const ctx = this.ctx, d = this.dpr;
+    const h = (i, k) => { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };
+    ctx.save(); ctx.fillStyle = '#ffffff';
+    for (let i = 0; i < n; i++) {
+      const rad = R * (1.06 + h(i, 1) * 0.3), flat = 0.15 + h(i, 2) * 0.75, tl = (h(i, 3) - 0.5) * 2.4;
+      const a = h(i, 4) * Math.PI * 2 + t * 0.0003 * (0.6 + h(i, 5) * 0.8) * (h(i, 6) < 0.5 ? 1 : -1);
+      const x0 = Math.cos(a) * rad, y0 = Math.sin(a) * rad * flat, x = cx + x0 * Math.cos(tl) - y0 * Math.sin(tl), y = cy + x0 * Math.sin(tl) + y0 * Math.cos(tl);
+      if (Math.sin(a) < 0 && Math.hypot(x - cx, y - cy) < R) continue;   // caché derrière la planète
+      ctx.globalAlpha = 0.6 + 0.4 * h(i, 7);
+      ctx.fillRect(x, y, d * 1.3, d * 1.3);
+    }
+    ctx.restore();
+  }
+
+  /* L'arche : quitte le chantier, passe au réservoir, prend son élan sur le rail et part vers la galaxie (en boucle) */
+  drawArk(t, orbiters, W) {
+    const ms = orbiters.filter(o => o.kind === 'moon').sort((a, b) => a.index - b.index);
+    if (ms.length < 3) return;
+    const ctx = this.ctx, d = this.dpr, q = (t * 0.00007) % 1;
+    const pts = [[ms[0].x, ms[0].y], [ms[1].x, ms[1].y], [ms[2].x, ms[2].y], [W * 1.15, -W * 0.15]];
+    const seg = q < 0.25 ? 0 : q < 0.5 ? 1 : 2, u = seg < 2 ? (q - seg * 0.25) / 0.25 : (q - 0.5) / 0.5;
+    const [a, b] = [pts[seg], pts[seg + 1]], e = seg === 2 ? u * u : u;   // accélération sur le rail
+    const x = a[0] + (b[0] - a[0]) * e, y = a[1] + (b[1] - a[1]) * e, ang = Math.atan2(b[1] - a[1], b[0] - a[0]), s = d * 5;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+    if (seg === 2) { ctx.strokeStyle = `rgba(127,211,255,${0.6 * u})`; ctx.lineWidth = d * 2; ctx.beginPath(); ctx.moveTo(-s * 6 * u, 0); ctx.lineTo(-s, 0); ctx.stroke(); }
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(s * 1.6, 0); ctx.lineTo(-s, s * 0.6); ctx.lineTo(-s * 0.6, 0); ctx.lineTo(-s, -s * 0.6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#7fd3ff'; ctx.beginPath(); ctx.arc(-s, 0, s * 0.35, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   /* position écran d'un point de surface (lon en tours, lat en radians) à l'instant t ; null s'il est caché */
   surfacePoint(lon, lat, t, cx, cy, R) {
     const tilt = this.traits.tilt, cT = Math.cos(tilt), sT = Math.sin(tilt);
@@ -912,7 +1419,7 @@ class PlanetRenderer {
 
   render(t, opts) {
     if (!this.map) return;
-    const { idx, u0, row, shade, rim, alpha, latA, n } = this.map;
+    const { idx, u0, row, shade, rim, alpha, latA, n, pa, pr } = this.map;
     const snow = opts.snow || 0, forest = opts.forest || 0, forestN = this.forestN;
     const tex = this.tex, cloud = this.cloud, lights = this.lights, emis = this.emissive, TW = this.TW;
     const data = this.img.data;
@@ -972,7 +1479,8 @@ class PlanetRenderer {
     // --- composition finale ---
     const ctx = this.ctx, W = this.canvas.width, cx = W / 2, cy = W / 2;
     this.pulse *= 0.9;
-    const R = W * 0.33 * (1 + 0.035 * this.pulse);
+    this.sizeScale = opts.scale == null ? 1 : Math.max(0.001, opts.scale);
+    const R = W * 0.33 * this.sizeScale * (1 + 0.035 * this.pulse);
     ctx.clearRect(0, 0, W, W);
 
     for (const st of this.stars) {
@@ -983,6 +1491,8 @@ class PlanetRenderer {
     }
     ctx.globalAlpha = 1;
 
+    // vue depuis une lune : la planète mère, immense, occupe le bas du bloc (on n'en voit que le haut)
+    if (opts.horizon) this.drawHorizon(t, cx, W, opts.horizon);
     // halo arrière
     const glow = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.45);
     glow.addColorStop(0, `rgba(${atm[0]},${atm[1]},${atm[2]},${0.28 + 0.2 * this.pulse})`);
@@ -991,6 +1501,14 @@ class PlanetRenderer {
     ctx.beginPath(); ctx.arc(cx, cy, R * 1.45, 0, Math.PI * 2); ctx.fill();
 
     this.moonColors = opts.moonColors;
+    this.moonLinks = opts.moonLinks;
+    this.moonScales = opts.moonScales;
+    this.moonGates = opts.moonGates;
+    this.moonNetwork = !!opts.moonNetwork;
+    this.debrisRing = !!opts.debrisRing;
+    this.shieldDots = opts.shieldDots || 0;
+    this.moonGateInfo = opts.moonGateInfo || [];
+    this.center = [cx, cy, R];
     const orbiters = this.orbiters(t, R, opts.satellites, opts.moons || 0, opts.parent, opts.ships || []);
     this.hot = orbiters.filter(o => o.kind === 'moon' || o.kind === 'parent')
       .map(o => ({ x: o.x, y: o.y, r: o.size, z: o.z, kind: o.kind, index: o.index }));
@@ -1007,7 +1525,12 @@ class PlanetRenderer {
     ctx.beginPath(); ctx.arc(cx, cy, R * 1.08, 0, Math.PI * 2); ctx.fill();
 
     if (opts.buildings) this.drawStructures(t, cx, cy, R, opts.buildings);   // bâtiments avant les lunes qui passent devant
+    // anneau de débris (comme Saturne) une fois les lunes parties ; boucliers EM ; arche en vol
+    if (this.debrisRing) this.drawDebrisRing(t, cx, cy, R);
+    if (this.shieldDots) this.drawShieldDots(t, cx, cy, R, this.shieldDots);
     orbiters.filter(o => o.z >= 0).forEach(o => this.drawOrbiter(o));
+    if (this.moonNetwork) this.drawArk(t, orbiters, W);
+    if (opts.gate > 0) this.drawGate(t, cx, cy, W * 0.33 * (1 + 0.035 * this.pulse), opts.gate, false, opts.gateStyle, opts.gateColor, opts.gateSeed, R);   // taille de la lune d'origine
     this.drawFire(t, cx, cy, R);
     this.drawTaxShip(t, cx, cy, R);
     this.drawBooms(t, cx, cy, R);
@@ -1019,15 +1542,17 @@ class PlanetRenderer {
     const tilt = this.traits.tilt * 0.6, cT = Math.cos(tilt), sT = Math.sin(tilt);
     const push = (rad, flat, ang, size, kind) => {
       const x0 = Math.cos(ang) * rad, y0 = Math.sin(ang) * rad * flat;
-      list.push({ x: c + x0 * cT - y0 * sT, y: c + x0 * sT + y0 * cT, z: Math.sin(ang), size, kind, t });
+      list.push({ x: c + x0 * cT - y0 * sT, y: c + x0 * sT + y0 * cT, z: Math.sin(ang), size, kind, t, rad });
     };
     // lune : créée par la technologie Terraformage, grossit avec les niveaux
     if (parent) { push(R * 1.4, 0.22, t * 0.00009 + 2.4, R * 0.15, 'parent'); list[list.length - 1].color = parent; }
     // lunes créées par le Terraformage (3 maximum), chacune sur son orbite
-    const ORB = [[1.22, 0.22, 0.00012, 1, 0.085], [1.34, 0.3, 0.00009, 3.2, 0.07], [1.45, 0.16, 0.00007, 5.1, 0.06]];
+    const ORB = [[1.2, 0.22, 0.00012, 1, 0.13], [1.3, 0.3, 0.00009, 3.2, 0.115], [1.38, 0.16, 0.00007, 5.1, 0.1]];   // lunes plus grosses
     for (let i = 0; i < Math.min(3, moonCount); i++) {
       const [rad, flat, sp, ph, sz] = ORB[i];
-      push(R * rad, flat, t * sp + ph, R * sz, 'moon');
+      const msc = this.moonScales && this.moonScales[i] != null ? this.moonScales[i] : 1;
+      push(R * rad, flat, t * sp + ph, R * sz * Math.max(0.001, msc), 'moon');
+      list[list.length - 1].base = R * sz;
       list[list.length - 1].index = i;
       list[list.length - 1].colors = this.moonColors;
     }
@@ -1073,6 +1598,19 @@ class PlanetRenderer {
       return;
     }
     if (o.kind === 'moon') {
+      // ascenseur gravitationnel : câble bleu entre la planète et la lune
+      if (this.moonLinks && this.moonLinks[o.index] && this.center) {
+        const [pcx, pcy, pR] = this.center, dx = o.x - pcx, dy = o.y - pcy, dd = Math.hypot(dx, dy) || 1;
+        // départ : point de la surface situé sous la lune (direction planète → lune ramenée au rayon de la planète)
+        const k = pR / (o.rad || dd), sx = pcx + dx * k, sy = pcy + dy * k;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(79,195,255,0.9)'; ctx.lineWidth = this.dpr * 2.6; ctx.shadowColor = '#4fc3ff'; ctx.shadowBlur = 6 * this.dpr;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(o.x - dx / dd * o.size, o.y - dy / dd * o.size); ctx.stroke();
+        // capsule qui monte et descend le long du câble
+        const q = (o.t * 0.0003 + o.index * 0.33) % 1, u = q < 0.5 ? q * 2 : 2 - q * 2;
+        ctx.fillStyle = '#e6f7ff'; ctx.beginPath(); ctx.arc(sx + (o.x - sx) * u, sy + (o.y - sy) * u, this.dpr * 2.8, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
       const g = ctx.createRadialGradient(o.x - o.size * 0.4, o.y - o.size * 0.4, o.size * 0.1, o.x, o.y, o.size);
       const mc = (o.colors && o.colors[o.index]) || ['#d8d4cc', '#6d6a66'];
       g.addColorStop(0, mc[0]); g.addColorStop(0.7, mc[1]); g.addColorStop(1, '#141414');
@@ -1083,6 +1621,8 @@ class PlanetRenderer {
       [[-0.3, -0.1, 0.22], [0.25, 0.2, 0.16], [0.05, -0.4, 0.12], [-0.1, 0.4, 0.1]].forEach(([dx, dy, r]) => {
         ctx.beginPath(); ctx.arc(o.x + dx * o.size, o.y + dy * o.size, r * o.size, 0, Math.PI * 2); ctx.fill();
       });
+      const gt = this.moonGates && this.moonGates[o.index];
+      if (gt > 0) this.drawGate(o.t, o.x, o.y, o.base || o.size, gt, true, this.moonGateInfo[o.index].style, this.moonGateInfo[o.index].color, this.moonGateInfo[o.index].seed, o.size);
     } else {
       ctx.fillStyle = '#cfe8ff';
       ctx.fillRect(o.x - o.size, o.y - o.size / 2, o.size * 2, o.size);

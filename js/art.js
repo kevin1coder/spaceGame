@@ -36,6 +36,89 @@ const RES_LOGOS = (() => {
   return { ferrite: wrap(ferrite), deuterium: wrap(deuterium), darkMatter: wrap(darkMatter) };
 })();
 
+/* ---------- Matériaux lunaires : logo (cristal de la couleur du matériau) ---------- */
+for (const k in LUNAR_MATS) {
+  const c = LUNAR_MATS[k].color;
+  RES_LOGOS[k] = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 L26 12 L22 28 L10 28 L6 12z" fill="${c}" stroke="#0b1220" stroke-width="1.4"/>` +
+    `<path d="M16 3 L16 28 M6 12 L26 12" stroke="#ffffff" stroke-opacity=".45" stroke-width="1"/><path d="M11 9 L15 6" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+}
+
+/* ---------- Robot d'extraction lunaire : une variante par matériau ---------- */
+function moonRobotArt(mat) {
+  const M = LUNAR_MATS[mat] || LUNAR_MATS.titanium, c = M.color, v = M.robot % 6, id = 'mr' + v;
+  // projection isométrique et volumes ombrés (dessus clair, face gauche moyenne, face droite sombre)
+  const P = (x, y, z) => [96 + (x - y) * 0.866 * 1.7, 60 + (x + y) * 0.5 * 1.7 - z * 1.7];
+  const path = (pts, fill, extra = '') => `<path d="M${pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L')}z" fill="${fill}" ${extra}/>`;
+  const box = (x, y, z, w, d, h, top, left, right) =>
+    path([P(x, y + d, z), P(x + w, y + d, z), P(x + w, y + d, z + h), P(x, y + d, z + h)], left, 'stroke="#141a22" stroke-width=".5"')
+    + path([P(x + w, y, z), P(x + w, y + d, z), P(x + w, y + d, z + h), P(x + w, y, z + h)], right, 'stroke="#141a22" stroke-width=".5"')
+    + path([P(x, y, z + h), P(x + w, y, z + h), P(x + w, y + d, z + h), P(x, y + d, z + h)], top, 'stroke="#141a22" stroke-width=".5"');
+  const steel = [`url(#${id}T)`, `url(#${id}L)`, `url(#${id}R)`];
+  // tête : 6 variantes
+  const hc = P(0, 0, 21);
+  const head = [
+    `<circle cx="${hc[0]}" cy="${hc[1]}" r="9" fill="url(#${id}S)"/><ellipse cx="${hc[0] + 3}" cy="${hc[1] + 1}" rx="4.5" ry="2.2" fill="${c}" opacity=".95"/>`,
+    box(-4, -4, 17, 8, 8, 8, ...steel) + `<circle cx="${P(-1, 4, 21)[0]}" cy="${P(-1, 4, 21)[1]}" r="1.8" fill="${c}"/><circle cx="${P(3, 4, 21)[0]}" cy="${P(3, 4, 21)[1]}" r="1.8" fill="${c}"/>`,
+    `<path d="M${hc[0] - 10} ${hc[1] + 4} Q${hc[0] - 10} ${hc[1] - 10} ${hc[0]} ${hc[1] - 10} Q${hc[0] + 10} ${hc[1] - 10} ${hc[0] + 10} ${hc[1] + 4}z" fill="url(#${id}S)"/><path d="M${hc[0] - 6} ${hc[1]} h12" stroke="${c}" stroke-width="2.4" stroke-linecap="round"/>`,
+    box(-3, -3, 17, 6, 6, 10, ...steel) + `<circle cx="${P(0, 3, 23)[0]}" cy="${P(0, 3, 23)[1]}" r="2.6" fill="${c}"/>`,
+    `<ellipse cx="${hc[0]}" cy="${hc[1]}" rx="11" ry="7" fill="url(#${id}S)"/><rect x="${hc[0] - 6}" y="${hc[1] - 1.5}" width="12" height="3" rx="1.5" fill="${c}"/>`,
+    `<circle cx="${hc[0]}" cy="${hc[1]}" r="7" fill="url(#${id}S)"/><circle cx="${hc[0]}" cy="${hc[1]}" r="10" fill="none" stroke="${c}" stroke-width="1.6" opacity=".8"/>`,
+  ][v];
+  // outil au bout du bras : 6 variantes
+  const a0 = P(5, 3, 11), a1 = P(13, 9, 8), tp = P(17, 12, 6);
+  const tool = [
+    `<polygon points="${a1[0]},${a1[1] - 3} ${tp[0] + 8},${tp[1] + 3} ${a1[0]},${a1[1] + 4}" fill="url(#${id}C)" stroke="#141a22" stroke-width=".6"/>`,
+    `<path d="M${a1[0]} ${a1[1]} l7 -6 M${a1[0]} ${a1[1]} l8 3" stroke="url(#${id}C)" stroke-width="3.4" stroke-linecap="round"/>`,
+    `<path d="M${a1[0]} ${a1[1]} L${tp[0] + 14} ${tp[1] + 12}" stroke="${c}" stroke-width="2.4" opacity=".95"/><circle cx="${tp[0] + 14}" cy="${tp[1] + 12}" r="5" fill="${c}" opacity=".55"/>`,
+    box(13, 8, 4, 6, 4, 3, `url(#${id}C)`, c, '#2a3038'),
+    `<circle cx="${a1[0] + 4}" cy="${a1[1] + 1}" r="6" fill="none" stroke="url(#${id}C)" stroke-width="3"/><circle cx="${a1[0] + 4}" cy="${a1[1] + 1}" r="1.6" fill="#2a3038"/>`,
+    `<path d="M${a1[0]} ${a1[1]} q9 -9 16 3" stroke="url(#${id}C)" stroke-width="3.4" fill="none" stroke-linecap="round"/>`,
+  ][v];
+  // cristaux à facettes (face éclairée claire, face ombrée foncée)
+  const crystal = (x, y, s) => {
+    const b = P(x, y, 0), t = P(x, y, s * 2.4);
+    return `<polygon points="${t[0]},${t[1]} ${b[0] - s * 2},${b[1]} ${b[0]},${b[1] + s * 0.9}" fill="${c}"/>`
+      + `<polygon points="${t[0]},${t[1]} ${b[0]},${b[1] + s * 0.9} ${b[0] + s * 2},${b[1]}" fill="${c}" style="filter:brightness(.55)"/>`
+      + `<polygon points="${t[0]},${t[1]} ${b[0] - s * 0.6},${b[1] - s * 0.3} ${b[0] - s * 1.4},${b[1] - s * 0.1}" fill="#fff" opacity=".45"/>`;
+  };
+  const crystals = [[26, -6, 3.2], [31, -12, 2.2], [21, -1, 2.4], [-10, 26, 2.6], [-16, 24, 1.8], [36, -2, 1.6]].map(a => crystal(...a)).join('');
+  const sh = P(0, 0, 0);
+  return `<svg viewBox="0 0 200 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="${id}Sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#04060d"/><stop offset="1" stop-color="#1a2131"/></linearGradient>
+      <linearGradient id="${id}Gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a606b"/><stop offset="1" stop-color="#2c3038"/></linearGradient>
+      <linearGradient id="${id}T" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2f5f9"/><stop offset="1" stop-color="#b9c3cf"/></linearGradient>
+      <linearGradient id="${id}L" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#aeb8c4"/><stop offset="1" stop-color="#7a8592"/></linearGradient>
+      <linearGradient id="${id}R" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6c7682"/><stop offset="1" stop-color="#3e4650"/></linearGradient>
+      <linearGradient id="${id}C" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".4" stop-color="${c}"/><stop offset="1" stop-color="#1a2030"/></linearGradient>
+      <radialGradient id="${id}S" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#c3ccd6"/><stop offset="1" stop-color="#4a525e"/></radialGradient>
+      <radialGradient id="${id}P" cx=".35" cy=".35" r=".7"><stop offset="0" stop-color="#9fd4ff"/><stop offset=".6" stop-color="#2f6fb0"/><stop offset="1" stop-color="#0b1a33"/></radialGradient>
+      <radialGradient id="${id}G" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="${c}" stop-opacity=".55"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect width="200" height="120" fill="url(#${id}Sky)"/>
+    ${STARS(11 + v * 7)}
+    <circle cx="170" cy="30" r="13" fill="url(#${id}P)"/>
+    <path d="M0 60 Q60 52 120 57 T200 54 V120 H0z" fill="url(#${id}Gr)"/>
+    <ellipse cx="34" cy="84" rx="16" ry="4.5" fill="#24282f"/><ellipse cx="34" cy="83" rx="12" ry="3" fill="#3a3f48"/>
+    <ellipse cx="172" cy="90" rx="18" ry="5" fill="#24282f"/><ellipse cx="172" cy="89" rx="13" ry="3.4" fill="#3a3f48"/>
+    <circle cx="${P(27, -6, 0)[0]}" cy="${P(27, -6, 0)[1]}" r="26" fill="url(#${id}G)"/>
+    ${crystals}
+    <ellipse cx="${sh[0] + 4}" cy="${sh[1] + 4}" rx="30" ry="9" fill="#000" opacity=".35"/>
+    ${box(-10, -9, 0, 20, 5, 4, '#3a4048', '#2a3038', '#1d2228')}
+    ${box(-10, 4, 0, 20, 5, 4, '#3a4048', '#2a3038', '#1d2228')}
+    ${[-6, 0, 6].map(x => { const w = P(x, 9, 2); return `<circle cx="${w[0]}" cy="${w[1]}" r="2.2" fill="#5d6672" stroke="#141a22" stroke-width=".5"/>`; }).join('')}
+    ${box(-7, -6, 4, 14, 12, 12, ...steel)}
+    ${path([P(-5, 6, 7), P(5, 6, 7), P(5, 6, 13), P(-5, 6, 13)], c, 'opacity=".9"')}
+    ${path([P(-4, 6, 8.5), P(4, 6, 8.5), P(4, 6, 9.6), P(-4, 6, 9.6)], '#ffffff', 'opacity=".6"')}
+    <path d="M${a0[0]} ${a0[1]} L${a1[0]} ${a1[1]}" stroke="url(#${id}L)" stroke-width="4.5" stroke-linecap="round"/>
+    <circle cx="${a0[0]}" cy="${a0[1]}" r="2.6" fill="#5d6672"/>
+    ${tool}
+    <path d="M${P(0, 0, 16)[0]} ${P(0, 0, 16)[1]} V${P(0, 0, 16)[1] - 2}" stroke="#9aa4b0" stroke-width="2"/>
+    ${head}
+    <path d="M${hc[0]} ${hc[1] - 9} V${hc[1] - 17}" stroke="#9aa4b0" stroke-width="1.4"/><circle cx="${hc[0]}" cy="${hc[1] - 18}" r="2.2" fill="${c}"/>
+  </svg>`;
+}
+
 /* ---------- Scènes des mines ---------- */
 const STARS = (seed) => {
   let s = '', a = seed;

@@ -9,6 +9,22 @@ const RESOURCES = {
   deuterium:  { name: 'Deutérium',     color: '#4fd1c5' },
   darkMatter: { name: 'Matière noire', color: '#a77bff' },
 };
+/* Matériaux lunaires : chaque lune en produit un seul, tiré au sort à sa création.
+   value : valeur d'une unité en équivalent ferrite (Commerce lunaire) ; to : matériau que l'Ascenseur
+   en tire sur la planète ; robot : variante d'image du robot d'extraction. */
+const LUNAR_MATS = {
+  helium:    { name: 'Hélium-3',       color: '#8fe3ff', value: 12, to: 'deuterium',  robot: 0 },
+  titanium:  { name: 'Titane',         color: '#c9d3de', value: 6,  to: 'ferrite',    robot: 1 },
+  iridium:   { name: 'Iridium',        color: '#e8c46a', value: 9,  to: 'ferrite',    robot: 2 },
+  neodymium: { name: 'Néodyme',        color: '#ff7fbf', value: 30, to: 'darkMatter', robot: 3 },
+  quartz:    { name: 'Quartz lunaire', color: '#9ff5c8', value: 15, to: 'deuterium',  robot: 4 },
+  plasmite:  { name: 'Plasmite',       color: '#c18cff', value: 45, to: 'darkMatter', robot: 5 },
+};
+/* matière d'une lune selon son type de planète (une lune désertique produit toujours du titane, etc.) */
+const MAT_BY_TYPE = { 'Tellurique': 'helium', 'Désertique': 'titanium', 'Exotique': 'plasmite', 'Volcanique': 'iridium', 'Lune': 'neodymium' };
+for (const k in LUNAR_MATS) RESOURCES[k] = { name: LUNAR_MATS[k].name, color: LUNAR_MATS[k].color, lunar: true };
+/* valeur des matériaux de la planète en équivalent ferrite (ratio du Commerce : 3 par cran) */
+const RES_VALUE = { ferrite: 1, deuterium: 3, darkMatter: 9 };
 
 const ICONS = {
   drill:   '<svg viewBox="0 0 24 24"><path d="M8 21l4-17 4 17M9.6 15h4.8M10.6 10h2.8M5 21h14M12 4V2"/></svg>',
@@ -185,12 +201,12 @@ const CLICK_TECHS = {
   autoBuy: {
     type: 'extraction', name: 'Achat Automatique', short: 'Achat auto', icon: 'cart', color: '#4fc3ff',
     desc: "Chaque niveau ajoute des bâtiments ou technologies à l'achat automatique. Activez « AUTO » sur leurs tuiles : ils seront achetés dès que les matériaux sont disponibles. Au niveau 8 : achat automatique de la mine au plus bas niveau.",
-    cost: { ferrite: 250, deuterium: 100 }, factor: 2.2, max: 8,
+    cost: { ferrite: 250, deuterium: 100 }, factor: 3.05, max: 8,   // même prix au niveau 1, ×10 par rapport à l'ancien tarif au niveau 8
   },
   autoTrade: {
     type: 'galaxy', name: 'Conversion automatique', short: 'Conversion auto', icon: 'swap', color: '#7fe0b0',
     desc: "Une fois activée, quand un matériau manque pour une amélioration (manuelle ou automatique), les autres matériaux sont convertis automatiquement au ratio du Commerce (3:1), dans les sens d'échange débloqués.",
-    reqClick: { exchanger: 1 },
+    reqClick: { exchanger: 1 }, req: { moonsJump: 10 },
     cost: { ferrite: 150000, deuterium: 60000, darkMatter: 10000 }, factor: 1, max: 1,
   },
   xferDeut: {
@@ -220,7 +236,7 @@ const CLICK_TECHS = {
   gate: {
     type: 'space', name: 'Carte galactique', short: 'Carte galactique', icon: 'gate', color: '#4fc3ff',
     desc: "Affiche la carte de la galaxie : chaque système est habité par un clan. Envoyez vos destroyers conquérir les systèmes voisins ; le but est de posséder toute la galaxie.",
-    req: { buildings: { shipyard: 10 } },
+    req: { moonsJump: 10 },
     cost: { darkMatter: 15000 }, factor: 1, max: 1,
   },
   peace: {
@@ -274,16 +290,32 @@ const SHIPS = {
     desc: "Vaisseau de guerre de la carte galactique : cliquez sur une planète de la carte pour y envoyer un destroyer. Les combats de la carte se comptent en nombre de destroyers.",
     cost: { ferrite: 8000, deuterium: 4000, darkMatter: 500 }, factor: 1,
     atk: 0, explore: 0,
-    req: { buildings: { shipyard: 10 } },
+    req: { moonsJump: 10 },
   },
 };
 
 /* Technologies d'une lune (payées avec le compteur de la lune) */
 const MOON_TECHS = {
+  extract: {
+    name: 'Extraction lunaire', short: 'Extraction', icon: 'pick', color: '#c9d3de',
+    desc: "Augmente la quantité de matériau extraite à chaque clic sur la lune (il n'y a pas de production automatique). La lune a une masse limitée : une fois épuisée, il n'en reste rien. Se paie uniquement avec ce matériau.",
+    cost: { lunar: 30 }, factor: 1.9, max: 20,
+  },
+  trade: {
+    name: 'Commerce lunaire', short: 'Commerce', icon: 'swap', color: '#4fc3ff',
+    desc: "Gratuit et sans niveau : un clic transforme tout le matériau de la lune en matière noire de la lune.",
+    cost: {}, factor: 1, free: true,
+  },
+  jump: {
+    name: 'Tremplin gravitationnel', short: 'Tremplin', icon: 'gate', color: '#4fc3ff',
+    desc: "Transforme peu à peu la lune en une immense porte de saut : un anneau se construit autour d'elle, et un horizon lumineux remplace sa surface. Au niveau 10, la lune est entièrement devenue une porte. Les 3 lunes au niveau 10 débloquent l'Espace galactique. Se paie uniquement en matière noire de la lune.",
+    cost: { darkMatter: 5000 }, factor: 2.5, max: 10,
+  },
   cargo: {
+    hidden: true,   // technologie masquée
     name: 'Ascenseur Gravitationnel', short: 'Ascenseur', icon: 'lift', color: '#a77bff',
-    desc: 'Toutes les 30 secondes, envoie le stock de la lune vers la planète principale. Chaque niveau augmente la quantité transportée.',
-    cost: { darkMatter: 10000 }, factor: 1.8,
+    desc: "Relie la lune à sa planète mère et ramène automatiquement de la matière noire de la planète vers la lune, de plus en plus vite à chaque niveau. Se paie avec la matière noire de la lune.",
+    cost: { darkMatter: 2000 }, factor: 2.2, max: 10,
   },
 };
 
@@ -339,7 +371,7 @@ const AUTO_UNLOCKS = [
   { label: 'Accélérateur de particules', ids: ['trading'] },
   { label: 'Commerce', ids: ['exchanger'] },
   { label: 'Entrepôts', ids: ['storeFerrite', 'storeDeuterium', 'storeDarkMatter'] },
-  { label: 'Usine Spatiale, vaisseaux et Cuirassé', ids: ['shipyard', 'destroyer', 'frigate', 'armor'] },
+  { label: 'Usine Spatiale, vaisseaux et Cuirassé', ids: ['shipyard', 'destroyer', 'frigate', 'warship', 'armor'] },
   { label: 'Commerce', ids: ['xferDeut', 'xferDark', 'peace'] },
   { label: 'Mine la plus basse', lowest: true },
 ];
@@ -362,13 +394,13 @@ const EVENTS = {
     apply(G) { S.raid.fx.inflation = Date.now() + G.RAID_PERIOD * 1000; return { note: 'Tous les prix ×2 pendant 30 s' }; },
   },
   rebellion: {
-    name: 'Rébellion', kind: 'neg', weight: 8, effect: '−10 % flotte', color: '#ff6b6b',
-    desc: "Une partie de l'équipage déserte avec 10 % des vaisseaux.",
+    name: 'Rébellion', kind: 'neg', weight: 8, effect: '−5 à 50 % flotte', color: '#ff6b6b',
+    desc: "Une partie de l'équipage déserte avec 5 à 50 % des vaisseaux (taux tiré au sort, par pas de 5 %).",
     cond: G => G.fleetCount() > 0,
     apply(G) {
-      const shipsLost = {};
-      for (const id in SHIPS) { const n = S.fleet[id] ? Math.max(1, Math.floor(S.fleet[id] * 0.1)) : 0; S.fleet[id] -= n; shipsLost[id] = n; }
-      return { shipsLost };
+      const rate = (arguments[1] && arguments[1].rate) || G.rebelRate(), shipsLost = {};
+      for (const id in SHIPS) { const n = S.fleet[id] ? Math.max(1, Math.floor(S.fleet[id] * rate)) : 0; S.fleet[id] -= n; shipsLost[id] = n; }
+      return { shipsLost, note: `−${Math.round(rate * 100)} % flotte` };
     },
   },
   rush: {
@@ -399,9 +431,9 @@ const EVENTS = {
     },
   },
   iceAge: {
-    name: 'Ère glaciaire', kind: 'neg', weight: 6, effect: 'Prod. 10 %', color: '#bfe9ff',
-    desc: 'La production de toutes les mines chute à 10 % pendant 30 s, et la planète se couvre de neige.',
-    apply(G) { S.raid.fx.ice = Date.now() + G.RAID_PERIOD * 1000; return { note: 'Production à 10 % pendant 30 s' }; },
+    name: 'Ère glaciaire', kind: 'neg', weight: 6, effect: 'Prod. 25 %', color: '#bfe9ff',
+    desc: 'La production de toutes les mines chute à 25 % pendant 30 s, et la planète se couvre de neige.',
+    apply(G) { S.raid.fx.ice = Date.now() + G.RAID_PERIOD * 1000; return { note: 'Production à 25 % pendant 30 s' }; },
   },
   calm: {
     name: 'Calme intersidéral', kind: 'calm', weight: 15, effect: '-', color: '#9fb0c8',

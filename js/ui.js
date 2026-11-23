@@ -71,8 +71,7 @@ const GROUPS = [
   { id: 'log',        title: 'Journal',       sub: 'Derniers événements' },
 ];
 const MOON_GROUPS = [
-  { id: 'moonMines', title: 'Mines lunaires', sub: 'Production de la lune' },
-  { id: 'moonTech',  title: 'Technologies lunaires', sub: 'Payées en matière noire de la lune' },
+  { id: 'moonTech',  title: 'Lune' },
 ];
 
 const UI = {
@@ -139,6 +138,7 @@ const UI = {
         break;
       }
       case 'autotrade': S.ui.autoTradeOn = !G.autoTradeOn(); G.rev++; break;
+      case 'moonswap': r = G.moonTrade(id); if (r.ok) this.flash = 'x:trade'; break;
       case 'cargotoggle': { const m = G.curMoon(); m.cargoOn = !m.cargoOn; G.rev++; break; }
       case 'clickup': r = G.upgrade('c', id); if (r.ok) this.flash = 'c:' + id; break;
       case 'view': this.setView(id); return;
@@ -210,7 +210,11 @@ const UI = {
           <div class="res-rate">+0/s</div>
         </div>
         <div class="res-bar"><i></i></div>
-      </div>`).join('');
+      </div>`).join('') + `
+      <div class="res lunar" data-res="lunar" hidden>
+        <div class="res-icon"></div>
+        <div class="res-txt"><div class="res-name"></div><div class="res-amt">0</div><div class="res-rate">+0/s</div></div>
+      </div>`;
     this.resEls = {};
     document.querySelectorAll('#resbar .res').forEach(el => {
       this.resEls[el.dataset.res] = { el, amt: el.querySelector('.res-amt'), rate: el.querySelector('.res-rate'), bar: el.querySelector('.res-bar i') };
@@ -218,17 +222,33 @@ const UI = {
   },
 
   updateResbar() {
-    const kind = this.viewKind(), w = G.wallet(kind), rt = G.walletRates(kind);
-    const where = kind === 'm' ? G.curMoon().name : 'Planète';
+    const kind = 'b', w = S.res, rt = G.rates(), where = 'Planète';
+    const le = this.resEls.lunar, moon = this.viewKind() === 'm' ? G.curMoon() : null;
+    if (le) {
+      le.el.style.display = moon ? '' : 'none';   // case visible seulement sur une lune
+      // sur une lune : seules la matière noire et la matière lunaire sont affichées
+      for (const r of ['ferrite', 'deuterium']) this.resEls[r].el.style.display = moon ? 'none' : '';
+      le.el.style.order = moon ? '1' : ''; this.resEls.darkMatter.el.style.order = moon ? '2' : '';
+      if (moon) {
+        const M = LUNAR_MATS[moon.mat];
+        le.el.querySelector('.res-icon').innerHTML = RES_LOGOS[moon.mat];
+        le.el.querySelector('.res-icon').style.setProperty('--c', M.color);
+        le.el.querySelector('.res-name').textContent = M.name;
+        le.amt.textContent = fmt(moon.res[moon.mat] || 0);
+        le.rate.textContent = `+${fmtRate(G.clickYield(moon.tech.extract))}/clic`;
+        le.el.title = `${moon.name} — ${M.name}`;
+      }
+    }
     for (const r of RES_KEYS) {
-      const e = this.resEls[r], cap = rt.caps[r], v = w[r];
+      const e = this.resEls[r], onMoon = moon && r === 'darkMatter';   // sur une lune : sa propre matière noire
+      const cap = onMoon ? Infinity : rt.caps[r], v = onMoon ? (moon.res.darkMatter || 0) : w[r];
       e.amt.textContent = fmt(v);
-      e.rate.textContent = `+${fmtRate(rt[r])}/s`;
+      e.rate.textContent = onMoon ? 'Lune' : `+${fmtRate(rt[r])}/s`;
       e.bar.style.width = isFinite(cap) ? Math.min(100, v / cap * 100) + '%' : '0%';
       e.el.classList.toggle('full', v >= cap);
       e.el.title = `${where} — ${RESOURCES[r].name} : ${fmt(v)} / ${fmt(cap)}\nProduction : ${fmt(rt[r] * 3600)}/h`;
     }
-    $('#resbar').classList.toggle('moon-wallet', kind === 'm');
+
   },
 
   /* ---------- Boucle de mise à jour ---------- */
@@ -286,7 +306,7 @@ const UI = {
       }
       case 'moonMines': body = tiles(ids('mines').filter(id => !BUILDINGS[id].hidden).map(id => this.buildingTile('m', id))); break;
       // technologies lunaires + Commerce de la planète mère (niveau commun, payé avec le compteur de la lune)
-      case 'moonTech': body = tiles([...Object.keys(MOON_TECHS).map(id => this.techTile('x', id)), this.techTile('c', 'exchanger')]); break;
+      case 'moonTech': body = tiles(Object.keys(MOON_TECHS).filter(id => !MOON_TECHS[id].hidden).map(id => this.techTile('x', id))); break;
       case 'click':
         // toutes les technologies sur une seule ligne (dans l'ordre des types)
         body = tiles(TECH_TYPES.flatMap(t => Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === t.id)).map(id => this.techTile('c', id)));
@@ -346,15 +366,17 @@ const UI = {
         return `<b>${fmtCost(next)}</b> ${diff('+' + fmtCost(next - cur))}`;
       }
       if (id === 'shipyard') {
-        const unlock = Object.values(SHIPS).find(d => d.req.buildings.shipyard === N);
+        const unlock = Object.values(SHIPS).find(d => (d.req.buildings || {}).shipyard === N);
         return unlock ? `<b>${unlock.name}</b>` : `<b>−${Math.round((1 - G.shipDiscount(N)) * 100)} %</b> ${diff('−5 %')}`;
       }
       return `<b>Niv. ${N}</b>`;
     }
     if (kind === 't') { const d = TECHS[id]; return `<b>${d.sign}${d.per * N} %</b> ${diff(d.sign + d.per)}`; }
     if (kind === 'x') {
-      const cur = G.cargoCap(L), next = G.cargoCap(N);
-      return `<b>${fmtCost(next)}</b> ${diff('+' + fmtCost(next - cur))}`;
+      if (id === 'extract') return `<b>${fmtCost(G.clickYield(N))}/clic</b> ${diff('+' + fmtCost(G.clickYield(N) - G.clickYield(L)))}`;
+      if (id === 'trade') return '';
+      if (id === 'jump') return `<b>${Math.min(10, N) * 10} %</b>`;
+      return `<b>${fmtCost(G.cargoRate(N))}/s</b> ${diff('+' + fmtCost(G.cargoRate(N) - G.cargoRate(L)))}`;
     }
     switch (id) {
       case 'pickFerrite': return `<b>+${G.ferritePerClick(N)}</b> ${diff('+3')}`;
@@ -470,17 +492,22 @@ const UI = {
     if (id === 'hyperspeed') extra += `<div class="tile-note">Expéditions : ${G.expedDuration('voyage', L).toFixed(1).replace('.', ',')} s</div>`;
     if (id === 'gate') extra += `<div class="tile-note">${L ? 'Carte galactique ouverte' : 'Ouvre la carte galactique et l\'exploration'}</div>`;
     if (id === 'peace') extra += `<div class="tile-note">Moins de <b>rébellions</b> et d'<b>hyperinflation</b>, plus de calme</div>`;
-    if (id === 'cargo') {
-      const on = G.curMoon().cargoOn;
-      extra += `<div class="tile-timer">${L > 0 ? '' : 'Envoie le stock vers la planète toutes les 30 s'}</div>`;
-      if (L > 0) extra += `<button class="btn mini ${on ? 'on' : 'off'}" data-action="cargotoggle">Envois auto : ${on ? 'ON' : 'OFF'}</button>`;
+    if (kind === 'x' && id === 'extract') extra += `<div class="tile-note">Cliquez sur la lune pour extraire du <b style="color:${LUNAR_MATS[G.curMoon().mat].color}">${LUNAR_MATS[G.curMoon().mat].name}</b></div>`;
+    if (kind === 'x' && id === 'trade') {
+      const moon = G.curMoon(), M = LUNAR_MATS[moon.mat];
+      const v = M.value / RES_VALUE.darkMatter, ratio = String(Math.round(v * 100) / 100).replace('.', ',');
+      extra += `<div class="tile-note">1${resIcon(moon.mat)} → ${ratio}${resIcon('darkMatter')}</div>`;
     }
+    if (kind === 'x' && id === 'jump') extra += `<div class="tile-note">${L >= 10 ? 'La lune est devenue une porte de saut' : `Porte de saut : ${L * 10} %`}</div>`;
+    if (id === 'cargo') extra += `<div class="tile-note">${L > 0 ? `Monte <b>${fmtCost(G.cargoRate(L))}</b> matière noire/s depuis la planète` : 'Ramène la matière noire de la planète vers la lune'}</div>`;
     return this.tile({
       kind, id, def, L,
-      art: STORE_ART[id] ? { html: STORE_ART[id] } : { icon: true, html: ICONS[def.icon] },
-      title: def.short || def.name, evo: this.evo(kind, id, L), extra,
+      art: kind === 'x' && id === 'extract' ? { html: moonRobotArt(G.curMoon().mat) } : STORE_ART[id] ? { html: STORE_ART[id] } : { icon: true, html: ICONS[def.icon] },
+      title: kind === 'x' && id === 'extract' ? LUNAR_MATS[G.curMoon().mat].name : (def.short || def.name), evo: this.evo(kind, id, L), extra,
       action, label: kind === 't' ? 'Rechercher' : 'Upgrade',
-      cost: G.costOf(kind, id, L + 1), locked: miss.length > 0, maxed, artInfo, costPrefix,
+      cost: def.free ? null : G.costOf(kind, id, L + 1), locked: miss.length > 0, maxed, artInfo, costPrefix,
+      // commerce lunaire : gratuit, sans niveau, un bouton qui convertit tout
+      ...(def.free ? { badge: 'Gratuit', buttons: `<button class="btn btn-up" data-action="moonswap" data-id="darkMatter">Tout convertir en matière noire</button>` } : {}),
     });
   },
 
@@ -567,13 +594,19 @@ const UI = {
       for (const b of c.ships) { const [sid, n] = b.dataset.id.split(':'); b.disabled = !G.canBuildShips(sid, +n); }
       for (const b of c.swaps || []) { const [a, z] = b.dataset.id.split(':'); b.disabled = G.exchangeQuote(a, z).n < 1; }
       for (const b of c.xfers) { const [tid, dir] = b.dataset.id.split(':'); b.disabled = G.xferAmount(tid, dir) < 1; }
-      if (c.timer && c.id === 'cargo' && G.curMoon().tech.cargo > 0) c.timer.textContent = G.curMoon().cargoOn ? `Prochain envoi : ${Math.ceil(G.cargoIn(G.moonIdx()))} s` : 'Envois automatiques en pause';
     }
     document.querySelectorAll('[data-fx]').forEach(el => { el.textContent = `${Math.ceil(G.fxLeft(el.dataset.fx))} s`; });
     if (S.map && S.click.gate > 0) {
       const left = Math.max(0, G.MAP_TICK - (S.map.t || 0));
       document.querySelectorAll('.map-timer').forEach(e => { e.textContent = `${Math.ceil(left)} s`; });
       const mb = document.querySelector('.map-bar'); if (mb) mb.style.width = `${(1 - left / G.MAP_TICK) * 100}%`;
+    }
+    // matière restante de la lune affichée (elle s'épuise à chaque clic)
+    const md = document.getElementById('moonDamage');
+    if (md) {
+      const m = this.viewKind() === 'm' ? G.curMoon() : null;
+      md.hidden = !m;
+      if (m) { md.innerHTML = `${resIcon(m.mat)} ${fmt(Math.floor(G.moonLeft(m)))} restants`; md.title = `${LUNAR_MATS[m.mat].name} encore extractible sur cette lune`; md.style.setProperty('--c', LUNAR_MATS[m.mat].color); }
     }
     const cc = document.getElementById('clickCount');
     if (cc) cc.textContent = `⛏ ${fmt(S.stats.clicks || 0)}`;   // clics de minage
@@ -595,14 +628,15 @@ const UI = {
     const tr = this.body().traits;
     $('#planetName').textContent = moon ? `Lune ${S.moons[i].name}` : S.planet.name;
     $('#planetSub').textContent = moon
-      ? `Lune ${tr.type.toLowerCase()} de ${S.planet.name} · ${fmt(tr.diameter)} km · ${tr.tmin} °C à ${tr.tmax} °C`
+      ? `Lune ${tr.type.toLowerCase()} de ${S.planet.name} · ${fmt(Math.round(tr.diameter * G.moonScale(S.moons[i])))} km · ${tr.tmin} °C à ${tr.tmax} °C`
       : `${tr.type} · ${fmt(tr.diameter)} km · ${tr.tmin} °C à ${tr.tmax} °C`;
     const gate = S.click.gate > 0;
     // à l'ouverture de la carte galactique, elle s'affiche d'office à la place de la planète
     if (gate && !S.ui.galaxySeen) { S.ui.galaxySeen = true; S.ui.galaxy = true; }
     const gal = gate && !!S.ui.galaxy;
-    $('#bodyTabs').innerHTML = S.moons.length || gate ? `<button class="${moon || gal ? '' : 'on'}" data-action="view" data-id="planet">Planète</button>` +
-      S.moons.map((m, k) => `<button class="${i === k && !gal ? 'on' : ''}" data-action="view" data-id="${k}">${esc(m.name)}</button>`).join('')
+    const shownMoons = G.moonsGone() ? [] : S.moons;   // plus d'onglet de lune une fois la carte créée
+    $('#bodyTabs').innerHTML = shownMoons.length || gate ? `<button class="${moon || gal ? '' : 'on'}" data-action="view" data-id="planet">Planète</button>` +
+      shownMoons.map((m, k) => `<button class="${i === k && !gal ? 'on' : ''}" data-action="view" data-id="${k}">${esc(m.name)}</button>`).join('')
       + (gate ? `<button class="${gal ? 'on' : ''}" data-action="view" data-id="galaxy">🌌 Galaxie</button>` : '') : '';
     $('#planetWrap').style.display = gal ? 'none' : '';
     // onglet Galaxie : le bloc planète (nom, description) est masqué
@@ -658,7 +692,7 @@ const UI = {
         const d = EVENTS[ev.id];
         return `<li class="evt ${d.kind} ${k === 0 ? 'next' : ''}" style="--c:${d.color}" title="${esc(d.desc)}">
           <span class="th-name">${ev.via ? '📡 ' : ''}${d.name} ${prob}</span>
-          <span class="th-pow">${ev.id === 'tax' && ev.rate ? `−${Math.round(ev.rate * 100)} %` : d.effect}</span>${when}</li>`;
+          <span class="th-pow">${ev.id === 'tax' && ev.rate ? `−${Math.round(ev.rate * 100)} %` : ev.id === 'rebellion' && ev.rate ? `−${Math.round(ev.rate * 100)} % flotte` : d.effect}</span>${when}</li>`;
       }
       const t = G.waveTier(w), E = ev.E != null ? ev.E : G.wavePower(w), ok = P >= E && P > 0;
       const row = `<li class="${ok ? 'ok' : 'ko'} ${k === 0 ? 'next' : ''}" style="--c:${t.color}" title="${esc(EVENTS.pirates.desc)}">
@@ -730,7 +764,7 @@ const UI = {
     } else {
       const d = EVENTS[L.id];
       name = `${L.via ? '📡 ' : ''}${d.name}`;
-      eff = L.id === 'tax' && L.note ? L.note.replace('taux ', '−') : d.effect;
+      eff = L.id === 'tax' && L.note ? L.note.replace('taux ', '−') : L.id === 'rebellion' && L.note ? L.note : d.effect;
       color = d.color; cls = 'evt ' + d.kind;
     }
     const fx = L.type === 'event' && FX[L.id] && G.fxActive(FX[L.id]) ? FX[L.id] : null;
@@ -861,7 +895,7 @@ const UI = {
       const body = this.body();
       // clic sur un astre en orbite : changement de corps
       const orb = body.hitOrbiter(x, y);
-      if (orb) return orb.kind === 'moon' ? this.cargo(orb.index, true) : this.setView('planet');
+      if (orb) return orb.kind === 'moon' ? this.setView(orb.index) : this.setView('planet');
       if (!body.hit(x, y)) return;
       const i = G.moonIdx();
       const { got } = G.click(false, i >= 0 ? i : 'planet');
@@ -889,7 +923,7 @@ const UI = {
   },
 
   gainsHTML(got) {
-    return RES_KEYS.filter(r => got[r] >= 0.5).map(r => `<span style="color:${RESOURCES[r].color}">+${fmtRate(got[r])}</span>`).join(' ');
+    return Object.keys(got).filter(r => RESOURCES[r] && got[r] >= 0.5).map(r => `<span style="color:${RESOURCES[r].color}">+${fmtRate(got[r])}</span>`).join(' ');
   },
 
   showGain(x, y, got) {

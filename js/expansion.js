@@ -156,12 +156,15 @@ Object.assign(G, {
     // pas de limite au nombre d'artefacts. Pour les très gros scores, la partie où tous les artefacts
     // sont abordables est répartie d'un coup (même proportion moyenne qu'un tirage un par un)
     const maxPts = Math.max(...ids.map(id => ARTIFACTS[id].pts)), meanPts = ids.reduce((x, id) => x + ARTIFACTS[id].pts, 0) / ids.length;
-    if (rest > maxPts * 200) {
+    // (répété : avec de très grands nombres, l'arrondi laisse un reste encore énorme après un passage)
+    if (!isFinite(rest)) rest = 0;
+    for (let pass = 0; pass < 60 && rest > maxPts * 200; pass++) {
       const per = Math.floor((rest - maxPts * 100) / meanPts / ids.length);   // tirages par artefact
-      if (per > 0) for (const id of ids) add(id, per);
+      if (per <= 0) break;
+      for (const id of ids) add(id, per);
     }
-    // le reste : un tirage à la fois, au hasard parmi les artefacts abordables
-    for (;;) {
+    // le reste : un tirage à la fois, au hasard parmi les artefacts abordables (borné par sécurité)
+    for (let guard = 0; guard < 200000; guard++) {
       const pool = ids.filter(id => ARTIFACTS[id].pts <= rest);
       if (!pool.length) break;
       add(pool[Math.floor(Math.random() * pool.length)], 1);
@@ -387,7 +390,7 @@ Object.assign(G, {
         // en défaite autant que l'attaquant, et pillage au prorata de l'écart
         if (this.mapFight(atk, def)) {
           const lost = Math.min(def, Math.round(atk));   // on perd autant de destroyers que l'attaquant en a engagé
-          const ratio = this.STEAL_MAX * (1 - Math.min(1, def / atk)) * Math.max(0, 1 - 0.1 * this.art('seal'));
+          const ratio = this.MAP_STEAL * (1 - Math.min(1, def / atk)) * Math.max(0, 1 - 0.1 * this.art('seal'));
           S.fleet.warship -= lost;
           this.mapHit(0, lost, false, `Raid des ${CLANS[clan].name}`);
           for (const r of RES_KEYS) S.res[r] -= S.res[r] * ratio;
