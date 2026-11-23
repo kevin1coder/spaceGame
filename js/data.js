@@ -204,7 +204,7 @@ const CLICK_TECHS = {
     cost: { ferrite: 250, deuterium: 100 }, factor: 3.05, max: 8,   // même prix au niveau 1, ×10 par rapport à l'ancien tarif au niveau 8
   },
   autoTrade: {
-    type: 'galaxy', name: 'Conversion automatique', short: 'Conversion auto', icon: 'swap', color: '#7fe0b0',
+    type: 'extraction', name: 'Conversion automatique', short: 'Conversion auto', icon: 'swap', color: '#7fe0b0',
     desc: "Une fois activée, quand un matériau manque pour une amélioration (manuelle ou automatique), les autres matériaux sont convertis automatiquement au ratio du Commerce (3:1), dans les sens d'échange débloqués.",
     reqClick: { exchanger: 1 }, req: { moonsJump: 10 },
     cost: { ferrite: 150000, deuterium: 60000, darkMatter: 10000 }, factor: 1, max: 1,
@@ -250,7 +250,7 @@ const CLICK_TECHS = {
     cost: { ferrite: 500 }, factor: 2,
   },
   jackpot: {
-    type: 'extraction', name: 'Accélérateur de particules', short: 'Accélérateur', icon: 'atom', color: '#a77bff',
+    type: 'extraction', name: 'Accélérateur de particules', short: 'Accél.', icon: 'atom', color: '#a77bff',
     desc: 'Toutes les 10 secondes, une collision de particules : en cas de succès, elle produit une quantité aléatoire de matière noire. Améliorez la puissance (quantité produite) ou l\'espérance (chance de succès).',
     cost: { ferrite: 60, deuterium: 20 }, factor: 1.7,
   },
@@ -280,7 +280,7 @@ const SHIPS = {
   },
   frigate: {
     name: 'Explorer', role: 'explore', icon: 'shipFrigate', color: '#ff6b6b',
-    desc: "Vaisseau d'exploration : les explorers partent automatiquement en expédition (30 s) et rapportent un artefact selon leur score (explorers × aléatoire) : le meilleur artefact dont le seuil est atteint. Sans armement, il ne défend pas la planète.",
+    desc: "Créez un vaisseau Explorer. Il part explorer votre galaxie afin de tenter d'y dénicher des artefacts aliens qui amélioreront votre colonie.",
     cost: { ferrite: 4000, deuterium: 2000, darkMatter: 200 }, factor: 1,
     atk: 0, explore: 50,
     req: { buildings: { shipyard: 2 } },

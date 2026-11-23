@@ -789,3 +789,20 @@ textarea {
 
 .swap-grid.single { gap: 6px; flex-wrap: wrap; }
 .moon-damage .rl { width: 14px; height: 14px; display: inline-block; vertical-align: -2px; }
+
+/* Header : stockage maximum en bas à droite de chaque matière */
+.res-cap { position: absolute; right: 8px; bottom: 5px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; pointer-events: none; }
+.res-cap { display: none; }   /* stockage max masqué dans le header */
+/* Accélérateur : titre court, valeurs à sa droite sur la même ligne */
+.casino .tile-row:has(.jp-evo) h3 { flex: 0 0 auto; overflow: visible; }
+.casino .jp-evo { margin-left: auto; white-space: nowrap; font-size: 11px; letter-spacing: -0.2px; }
+.casino .jp-evo .diff { font-size: 10px; }
+/* bouton verrouillé : cadenas et condition */
+.btn.btn-lock { font-size: 10px; line-height: 1.2; text-transform: none; letter-spacing: 0; white-space: normal; padding: 4px 6px; color: #ffb347; background: rgba(40,30,15,.55); border-color: rgba(255,179,71,.35); opacity: 1; }
+
+/* Commerce : une ligne par matière donnée */
+.xrows { display: flex; flex-direction: column; gap: 3px; margin: 4px 0; }
+.xrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; align-items: center; }
+.xgive { display: inline-flex; align-items: center; gap: 2px; font: 700 11px var(--font); color: #e6edf7; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.xrow .btn.mini { font-size: 11px; padding: 3px 2px; display: inline-flex; justify-content: center; align-items: center; gap: 2px; white-space: nowrap; min-width: 0; }
+.xrow .rl, .xgive .rl { width: 12px; height: 12px; }

@@ -211,7 +211,8 @@ const G = {
   },
 
   mineOutput(id, L) { return MINES[id].base * this.growth(L); },
-  storageCap(L) { return Math.floor(5000 * Math.floor(2.5 * Math.exp(20 * L / 33)) * (1 + 0.1 * S.techs.logistics + 0.1 * this.art('relic'))); },
+  // capacité des entrepôts : plus faible sur les premiers niveaux (10 % au niveau 0, pleine à partir du niveau 10)
+  storageCap(L) { return Math.floor(5000 * Math.floor(2.5 * Math.exp(20 * L / 33)) * Math.min(1, 0.1 + 0.09 * L) * (1 + 0.1 * S.techs.logistics + 0.1 * this.art('relic'))); },
 
   rushMult() { return S.raid && this.fxActive('rush') ? 5 : 1; },   // ruée minière : clics ×5
 
@@ -533,18 +534,17 @@ const G = {
   },
   /* niveau « d'efficacité » : 1 jusqu'au niveau 6, puis +1 par niveau */
   exchangeEffLevel(L = S.click.exchanger || 0) { return Math.max(1, L - EXCHANGE_PAIRS.length + 1); },
+  /* quantité donnée par clic depuis une matière (même valeur pour toutes : 9 × le volume du niveau en ferrite) */
+  exchangeGive(from, L = S.click.exchanger || 0) { return Math.round(this.xferBatch(Math.max(1, L)) * 9 / RES_VALUE[from]); },
   exchangeQuote(from, to) {
     if (!this.exchangeUnlocked(from, to)) return { n: 0 };
     // ratio fixe 3:1 ; chaque niveau augmente la quantité maximale échangée
     const W = this.shareWallet(), caps = this.moonIdx() >= 0 ? this.INF_CAPS : this.rates().caps;
-    const r = this.EXCHANGE_RATIO, batch = this.xferBatch(S.click.exchanger || 0);
-    const steps = RES_KEYS.indexOf(to) - RES_KEYS.indexOf(from), k = Math.pow(r, Math.abs(steps));
-    // vers plus précieux : on donne k « from » par unité reçue ; vers moins précieux : 1 « from » donne k « to »
-    const n = steps > 0
-      ? Math.min(batch, Math.floor(W[from] / k), Math.floor(caps[to] - W[to]))
-      : Math.min(batch, Math.floor(W[from]), Math.floor((caps[to] - W[to]) / k));
-    const give = steps > 0 ? n * k : n, get = steps > 0 ? n : n * k;
-    return { n: Math.max(0, n), give, get };
+    // quantité donnée par clic : la même pour les deux destinations (voir exchangeGive), au ratio 3 par cran
+    const vf = RES_VALUE[from], vt = RES_VALUE[to];
+    const give0 = Math.min(this.exchangeGive(from), Math.floor(W[from]), Math.floor(Math.max(0, caps[to] - W[to]) * vt / vf));
+    const get = Math.floor(give0 * vf / vt), give = Math.ceil(get * vt / vf);
+    return { n: Math.max(0, get), give, get };
   },
   /* Conversion automatique (si activée) : plan d'échanges pour couvrir un coût, ou null.
      Ratio du Commerce (3:1 par cran), seulement dans les sens d'échange débloqués ;
@@ -662,6 +662,11 @@ const G = {
     this.levels(kind)[id] = c.lvl;
     if (kind === 'c' && id === 'terraform') this.syncMoons();
     if (kind === 'c' && id === 'peace') S.raid.plan = {};
+    // achat auto : ce que le nouveau niveau débloque est activé par défaut
+    if (kind === 'c' && id === 'autoBuy') {
+      const u = AUTO_UNLOCKS[c.lvl - 1];
+      if (u) { if (u.lowest) S.auto.lowest = true; for (const k of u.ids || []) if (S.auto[k] == null || S.auto[k] === false) S.auto[k] = true; }
+    }
     if (kind === 's') { this.emit(`${this.defOf(kind, id).name} ${this.defOf(kind, id).fem ? "construite" : "construit"} — flotte : ${c.lvl}`, 'success', true); return c; }
     const where = kind === 'm' || kind === 'x' ? `${this.curMoon().name} · ` : '';
     this.emit(`${auto ? '[Auto] ' : ''}${where}${this.defOf(kind, id).name} → niveau ${c.lvl}`, 'success', true);

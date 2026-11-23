@@ -209,6 +209,7 @@ const UI = {
           <div class="res-amt">0</div>
           <div class="res-rate">+0/s</div>
         </div>
+        <div class="res-cap"></div>
         <div class="res-bar"><i></i></div>
       </div>`).join('') + `
       <div class="res lunar" data-res="lunar" hidden>
@@ -217,7 +218,7 @@ const UI = {
       </div>`;
     this.resEls = {};
     document.querySelectorAll('#resbar .res').forEach(el => {
-      this.resEls[el.dataset.res] = { el, amt: el.querySelector('.res-amt'), rate: el.querySelector('.res-rate'), bar: el.querySelector('.res-bar i') };
+      this.resEls[el.dataset.res] = { el, amt: el.querySelector('.res-amt'), rate: el.querySelector('.res-rate'), bar: el.querySelector('.res-bar i'), cap: el.querySelector('.res-cap') };
     });
   },
 
@@ -243,6 +244,7 @@ const UI = {
       const e = this.resEls[r], onMoon = moon && r === 'darkMatter';   // sur une lune : sa propre matière noire
       const cap = onMoon ? Infinity : rt.caps[r], v = onMoon ? (moon.res.darkMatter || 0) : w[r];
       e.amt.textContent = fmt(v);
+      if (e.cap) e.cap.textContent = isFinite(cap) ? `max ${fmtCost(cap)}` : '';   // stockage maximum
       e.rate.textContent = onMoon ? 'Lune' : `+${fmtRate(rt[r])}/s`;
       e.bar.style.width = isFinite(cap) ? Math.min(100, v / cap * 100) + '%' : '0%';
       e.el.classList.toggle('full', v >= cap);
@@ -298,10 +300,10 @@ const UI = {
     switch (g.id) {
       case 'mines': {
         const row = (label, list) => `<div class="tech-row"><div class="tech-row-label">${label}</div>${tiles(list)}</div>`;
-        body = row('Mines', ids('mines').filter(id => !BUILDINGS[id].hidden).map(id => this.buildingTile('b', id)))
-          + row('Outils · Automatisation', Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === 'extraction')
-            .sort((a, b) => (a === 'autoBuy') - (b === 'autoBuy')).map(id => this.techTile('c', id)))   // Achat auto à droite
-          + row('Stockage', ids('storage').map(id => this.buildingTile('b', id)));
+        body = row('Mines', [...ids('mines').filter(id => !BUILDINGS[id].hidden).map(id => this.buildingTile('b', id)), this.casinoTileHTML()])
+          + row('Stockage', ids('storage').map(id => this.buildingTile('b', id)))
+          + row('Sciences', Object.keys(CLICK_TECHS).filter(id => CLICK_TECHS[id].type === 'extraction' && id !== 'jackpot')
+            .sort((a, b) => ({ autoBuy: 1, autoTrade: 2 }[a] || 0) - ({ autoBuy: 1, autoTrade: 2 }[b] || 0)).map(id => this.techTile('c', id)));   // Achat auto puis Conversion auto à droite
         break;
       }
       case 'moonMines': body = tiles(ids('mines').filter(id => !BUILDINGS[id].hidden).map(id => this.buildingTile('m', id))); break;
@@ -359,41 +361,41 @@ const UI = {
       if (MINES[id]) {
         const k = G.bonus(MINES[id].res);
         const cur = Math.round(G.mineOutput(id, L) * k), next = Math.round(G.mineOutput(id, N) * k);
-        return `<b>${fmtCost(next)}/s</b> ${diff('+' + fmtCost(next - cur))}`;
+        return `<b>${fmtCost(cur)}/s</b> ${diff('+' + fmtCost(next - cur))}`;
       }
       if (BUILDINGS[id].cat === 'storage') {
         const cur = G.storageCap(L), next = G.storageCap(N);
-        return `<b>${fmtCost(next)}</b> ${diff('+' + fmtCost(next - cur))}`;
+        return `<b>${fmtCost(cur)}</b> ${diff('+' + fmtCost(next - cur))}`;
       }
       if (id === 'shipyard') {
         const unlock = Object.values(SHIPS).find(d => (d.req.buildings || {}).shipyard === N);
-        return unlock ? `<b>${unlock.name}</b>` : `<b>−${Math.round((1 - G.shipDiscount(N)) * 100)} %</b> ${diff('−5 %')}`;
+        return unlock ? `<b>Niv. ${L}</b> ${diff(unlock.short || unlock.name)}` : `<b>−${Math.round((1 - G.shipDiscount(L)) * 100)} %</b> ${diff('−' + Math.round((G.shipDiscount(L) - G.shipDiscount(N)) * 100) + ' %')}`;
       }
       return `<b>Niv. ${N}</b>`;
     }
-    if (kind === 't') { const d = TECHS[id]; return `<b>${d.sign}${d.per * N} %</b> ${diff(d.sign + d.per)}`; }
+    if (kind === 't') { const d = TECHS[id]; return `<b>${d.sign}${d.per * L} %</b> ${diff(d.sign + d.per)}`; }
     if (kind === 'x') {
-      if (id === 'extract') return `<b>${fmtCost(G.clickYield(N))}/clic</b> ${diff('+' + fmtCost(G.clickYield(N) - G.clickYield(L)))}`;
+      if (id === 'extract') return `<b>${fmtCost(G.clickYield(L))}/clic</b> ${diff('+' + fmtCost(G.clickYield(N) - G.clickYield(L)))}`;
       if (id === 'trade') return '';
-      if (id === 'jump') return `<b>${Math.min(10, N) * 10} %</b>`;
-      return `<b>${fmtCost(G.cargoRate(N))}/s</b> ${diff('+' + fmtCost(G.cargoRate(N) - G.cargoRate(L)))}`;
+      if (id === 'jump') return `<b>${L * 10} %</b> ${L < 10 ? diff('+10 %') : ''}`;
+      return `<b>${fmtCost(G.cargoRate(L))}/s</b> ${diff('+' + fmtCost(G.cargoRate(N) - G.cargoRate(L)))}`;
     }
     switch (id) {
       case 'pickFerrite': return `<b>+${G.ferritePerClick(N)}</b> ${diff('+3')}`;
       case 'pickDeut': return `<b>+${G.deutPerClick(N)}</b> ${diff('+2')}`;
       case 'robot': return `<b>${this.fmtFreq(G.robotRate(N))}</b>`;
-      case 'autoBuy': return `<b>${N}/${CLICK_TECHS.autoBuy.max}</b>`;
+      case 'autoBuy': return `<b>${L}/${CLICK_TECHS.autoBuy.max}</b>`;
       case 'autoTrade': return '<b>3:1</b>';
       case 'xferDeut': case 'xferDark': return `<b>${fmtCost(G.xferBatch(N))} u</b> ${diff(this.fmtRatio(G.xferRatio(N)))}`;
       case 'exchanger': {
         // ratio / volume échangé actuel (à droite du titre)
         return `<b title="Unités échangées au maximum">${fmtCost(G.xferBatch(L))}</b>`;
       }
-      case 'terraform': return `<b>${N}/${G.MAX_MOONS}</b> ${diff('+1 lune')}`;
+      case 'terraform': return `<b>${L}/${G.MAX_MOONS}</b> ${diff('+1 lune')}`;
       case 'gate': return '<b>Carte</b>';
-      case 'hyperspeed': { const a = G.expedDuration('voyage', L), b = G.expedDuration('voyage', N); return `<b>${fmtRate(b)} s</b> ${diff('−' + (a - b).toFixed(1).replace('.', ',') + ' s')}`; }
-      case 'armor': return `<b>${Math.round(G.armorShare(N) * 100)} %</b> ${diff('+5 %')}`;
-      case 'peace': return `<b>−${Math.round((1 - G.peaceFactor(N)) * 100)} %</b>`;
+      case 'hyperspeed': { const a = G.expedDuration('voyage', L), b = G.expedDuration('voyage', N); return `<b>${fmtRate(a)} s</b> ${diff('−' + (a - b).toFixed(1).replace('.', ',') + ' s')}`; }
+      case 'armor': return `<b>${Math.round(G.armorShare(L) * 100)} %</b> ${diff('+5 %')}`;
+      case 'peace': return `<b>−${Math.round((1 - G.peaceFactor(L)) * 100)} %</b>`;
     }
     return '';
   },
@@ -401,8 +403,10 @@ const UI = {
   /* « 3 ferrite → 1 deutérium » : ratio affiché sur le bouton d'échange */
   swapLabel(a, b) {
     const steps = RES_KEYS.indexOf(b) - RES_KEYS.indexOf(a), k = Math.pow(G.EXCHANGE_RATIO, Math.abs(steps));
-    const n = v => v === 1 ? '' : v;   // ratio 1 : pas de chiffre
-    return `${n(steps > 0 ? k : 1)}${resIcon(a)}<span class="arrow">→</span>${n(steps > 0 ? 1 : k)}${resIcon(b)}`;
+    // quantités échangées à chaque clic (volume du niveau actuel du Commerce) : donné → reçu
+    const B = G.xferBatch(Math.max(1, S.click.exchanger || 0));
+    const give = steps > 0 ? B * k : B, get = steps > 0 ? B : B * k;
+    return `${fmtCost(give)}${resIcon(a)}<span class="arrow">→</span>${fmtCost(get)}${resIcon(b)}`;
   },
 
   fmtRatio(r) { return `${r.toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}:1`; },
@@ -420,14 +424,14 @@ const UI = {
   },
 
   /* Structure commune de toutes les tuiles */
-  tile({ kind, id, def, L, art, title, evo, extra = '', action, label, cost, locked, maxed, cls = '', titleAttr, artInfo = '', badge, buttons, costPrefix = '' }) {
+  tile({ kind, id, def, L, art, title, evo, extra = '', action, label, cost, locked, lockText = '', maxed, cls = '', titleAttr, artInfo = '', badge, buttons, costPrefix = '' }) {
     return `
       <div class="tile ${locked ? 'locked' : ''} ${cls}" data-upg data-kind="${kind}" data-id="${id}" style="--c:${def.color}" title="${esc(titleAttr || `${def.name} — ${def.desc}`)}">
         <div class="tile-art ${art.icon ? 'icon' : ''}">${art.html}<span class="tile-lvl">${badge || `Niv. ${L}`}</span>${'bcts'.includes(kind) ? this.autoToggleHTML(id) : ''}${artInfo}${maxed ? '' : artCosts(kind, id, cost, 'left', costPrefix)}</div>
         <div class="tile-info">
           <div class="tile-row"><h3>${title}</h3><span class="tile-gain">${maxed ? '<b>MAX</b>' : evo}</span></div>
           ${extra}
-          ${buttons || upBtn(action, id, label, maxed ? 'Niveau max' : locked ? 'Verrouillé' : '')}
+          ${locked && lockText ? `<button class="btn btn-up btn-lock" disabled>🔒 ${esc(lockText)}</button>` : buttons || upBtn(action, id, label, maxed ? 'Niveau max' : locked ? 'Verrouillé' : '')}
         </div>
       </div>`;
   },
@@ -456,7 +460,6 @@ const UI = {
     const maxed = !!(def.max && L >= def.max);
     const action = { b: 'build', t: 'research', c: 'clickup', x: 'moontech' }[kind];
     let extra = '';
-    if (miss.length) extra += `<div class="tile-req">🔒 ${miss.join(' · ')}</div>`;
     let artInfo = '', costPrefix = '';
     if (kind === 'c' && def.from && L > 0) {
       const b = G.xferBatch(L), ratio = G.xferRatio(L);
@@ -475,13 +478,19 @@ const UI = {
         // deux ratios : vers le matériau plus précieux, et retour vers le moins précieux
         // quantité échangée affichée à côté du ratio (au-dessus du prix)
       }
-      extra += `<div class="swap-grid">${EXCHANGE_PAIRS.map(([a, b], k) => k < L
-        ? `<button class="btn mini" data-action="swap" data-id="${a}:${b}" title="${RESOURCES[a].name} → ${RESOURCES[b].name}">${this.swapLabel(a, b)}</button>`
-        : `<button class="btn mini locked" disabled title="Débloqué au niveau ${k + 1}">🔒 ${this.swapLabel(a, b)}</button>`).join('')}</div>`;
+      // une ligne par matière donnée : quantité donnée, puis un bouton par matière reçue
+      extra += `<div class="xrows">${RES_KEYS.map(a => {
+        const give = G.exchangeGive(a, L);
+        return `<div class="xrow"><span class="xgive" title="Quantité donnée à chaque échange">${fmtCost(give)}${resIcon(a)}</span>${RES_KEYS.filter(b => b !== a).map(b => {
+          const k = EXCHANGE_PAIRS.findIndex(([x, y]) => x === a && y === b), get = Math.floor(give * RES_VALUE[a] / RES_VALUE[b]);
+          return k < L
+            ? `<button class="btn mini" data-action="swap" data-id="${a}:${b}" title="${fmtCost(give)} ${RESOURCES[a].name.toLowerCase()} → ${fmtCost(get)} ${RESOURCES[b].name.toLowerCase()}">${fmtCost(get)}${resIcon(b)}</button>`
+            : `<button class="btn mini locked" disabled title="Débloqué au niveau ${k + 1}">🔒${resIcon(b)}</button>`;
+        }).join('')}</div>`;
+      }).join('')}</div>`;
     }
     if (id === 'autoBuy') {
       if (!maxed) extra += `<div class="tile-note">Ajoute : <b>${AUTO_UNLOCKS[L].label}</b></div>`;
-      if (L > 0) extra += `<div class="tile-note">Activez <b>AUTO</b> sur les tuiles</div>`;
       if (G.autoUnlocked('lowest')) extra += `<button class="btn mini ${S.auto.lowest ? 'on' : 'off'}" data-action="auto" data-id="lowest">Mine la plus basse : ${S.auto.lowest ? 'ON' : 'OFF'}</button>`;
     }
     if (id === 'autoTrade') {
@@ -505,7 +514,7 @@ const UI = {
       art: kind === 'x' && id === 'extract' ? { html: moonRobotArt(G.curMoon().mat) } : STORE_ART[id] ? { html: STORE_ART[id] } : { icon: true, html: ICONS[def.icon] },
       title: kind === 'x' && id === 'extract' ? LUNAR_MATS[G.curMoon().mat].name : (def.short || def.name), evo: this.evo(kind, id, L), extra,
       action, label: kind === 't' ? 'Rechercher' : 'Upgrade',
-      cost: def.free ? null : G.costOf(kind, id, L + 1), locked: miss.length > 0, maxed, artInfo, costPrefix,
+      cost: def.free ? null : G.costOf(kind, id, L + 1), locked: miss.length > 0, lockText: miss.join(' · '), maxed, artInfo, costPrefix,
       // commerce lunaire : gratuit, sans niveau, un bouton qui convertit tout
       ...(def.free ? { badge: 'Gratuit', buttons: `<button class="btn btn-up" data-action="moonswap" data-id="darkMatter">Tout convertir en matière noire</button>` } : {}),
     });
@@ -520,11 +529,10 @@ const UI = {
       art: { icon: true, html: ICONS[def.icon] },
       badge: `×${n}`,
       title: def.short || def.name, evo: def.role === 'defense' ? `<b>⚔ ${def.atk}</b>` : def.role === 'explore' ? `<b>🔭 ${def.explore}</b>` : '<b>🌌</b>',
-      extra: (miss.length ? `<div class="tile-req">🔒 ${miss.join(' · ')}</div>` : '')
-        + `<div class="tile-note">${def.role === 'defense' ? 'Défense de la planète' : def.role === 'explore' ? 'Expéditions' : 'Conquête de la galaxie'}</div>`,
+      extra: `<div class="tile-note">${def.role === 'defense' ? 'Défense de la planète' : def.role === 'explore' ? 'Expéditions' : 'Conquête de la galaxie'}</div>`,
       buttons: `<div class="split-btn"><div class="split-halves three">${[1, 10, 100].map(k =>
         `<button class="btn btn-ship" data-action="ship" data-id="${id}:${k}" title="Construire ${k} × ${def.name}">×${k}</button>`).join('')}</div></div>`,
-      cost: G.costOf('s', id, 1), locked: miss.length > 0,
+      cost: G.costOf('s', id, 1), locked: miss.length > 0, lockText: miss.join(' · '),
     });
   },
 
@@ -564,15 +572,15 @@ const UI = {
           ${luckMax ? '' : artCosts('c', 'casinoLuck', G.costOf('c', 'casinoLuck', C + 1), 'right')}
         </div>
         <div class="tile-info">
-          <h3>${def.short}</h3>
-          ${L > 0 ? '<div class="jp-timer"></div>' : '<div class="tile-note">Une collision toutes les 10 s</div>'}
-          <div class="tile-row"><span class="tile-note">Puissance</span><span class="tile-gain"><b>${fmtCost(G.jackpotAvg(L + 1))}</b> ${diff('+' + fmtCost(G.jackpotAvg(L + 1) - G.jackpotAvg(L)))}</span></div>
-          <div class="tile-row"><span class="tile-note">Espérance</span><span class="tile-gain">${luckMax ? `<b>${pct(G.casinoChance())}</b> MAX` : `<b>${pct(G.casinoChance(C + 1))}</b> ${diff('+5 %')}`}</span></div>
+          <div class="tile-row"><h3>${def.short}</h3>
+          <span class="tile-gain jp-evo">
+            <b title="Puissance : matière noire par collision réussie">${fmtCost(G.jackpotAvg(L))}</b> ${diff('+' + fmtCost(G.jackpotAvg(L + 1) - G.jackpotAvg(L)))}
+            <b title="Probabilité de réussite d'une collision">${pct(G.casinoChance(C)).replace(' ', '')}</b> ${luckMax ? '' : diff('+5%')}
+            <b class="jp-timer" title="Temps avant la prochaine collision">${Math.ceil(G.jackpotPeriod())}s</b></span></div>
           <div class="split-btn">
-            <div class="split-top">Upgrade</div>
             <div class="split-halves">
-              <button class="btn btn-up" data-upg data-kind="c" data-id="jackpot" data-action="clickup">Puissance</button>
-              <button class="btn btn-up" data-upg data-kind="c" data-id="casinoLuck" data-action="clickup">${luckMax ? 'Max' : 'Espérance'}</button>
+              <button class="btn btn-up" data-upg data-kind="c" data-id="jackpot" data-action="clickup" title="Améliorer la puissance">Up. Puiss.</button>
+              <button class="btn btn-up" data-upg data-kind="c" data-id="casinoLuck" data-action="clickup">${luckMax ? 'Max' : 'Up. Proba'}</button>
             </div>
           </div>
         </div>
@@ -619,7 +627,7 @@ const UI = {
     if (bar) bar.style.width = `${(1 - G.raidIn() / G.RAID_PERIOD) * 100}%`;
     this.updateTimers();
     const jp = document.querySelector('.jp-timer');
-    if (jp) jp.textContent = `Prochaine collision : ${Math.ceil(G.jackpotIn())} s`;
+    if (jp) jp.textContent = `${Math.ceil(S.click.jackpot > 0 ? G.jackpotIn() : G.jackpotPeriod())}s`;
   },
 
   /* ---------- Panneau gauche : planète ou lune ---------- */

@@ -31,7 +31,7 @@ const ACHIEVEMENTS = [
   { id: 'clicks',   name: 'Mineur assidu',     icon: 'pick',        unit: 'clics',                steps: [10, 100, 1e3, 5e3, 1e4],    metric: () => S.stats.clicks },
   { id: 'ferrite',  name: 'Magnat des matières', icon: 'drill',     unit: 'matières en stock (toutes)', steps: [1e4, 1e5, 1e6, 1e7, 1e8], metric: () => RES_KEYS.reduce((a, r) => a + S.res[r], 0) },
   { id: 'mines',    name: 'Industriel',        icon: 'factory',     unit: 'niveaux de mines',     steps: [10, 30, 50, 75, 100],      metric: () => G.mineSum() },
-  { id: 'fleet',    name: 'Amiral',            icon: 'shipCruiser', unit: 'vaisseaux',            steps: [1, 10, 50, 200, 1000],     metric: () => G.fleetCount() + G.expedShips() + G.mapDeployed() },
+  { id: 'fleet',    name: 'Amiral',            icon: 'shipCruiser', unit: 'explorers et destroyers', steps: [1, 10, 50, 200, 1000],     metric: () => G.fleetTotal('frigate') + (S.fleet.warship || 0) + G.mapDeployed() },   // explorers et destroyers (sans les boucliers EM)
   { id: 'raids',    name: 'Défenseur',         icon: 'laser',       unit: 'attaques repoussées',  steps: [1, 5, 15, 30, 50],         metric: () => S.stats.raidsWon },
   { id: 'moons',    name: 'Terraformeur',      icon: 'moon',        unit: 'lunes',                steps: [1, 2, 3], tiers: [0, 2, 4],                  metric: () => S.moons.length },
   { id: 'expeds',   name: 'Explorateur',       icon: 'warp',        unit: 'expéditions',          steps: [1, 5, 15, 40, 100],        metric: () => S.stats.expeds },
